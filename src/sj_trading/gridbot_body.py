@@ -3,7 +3,6 @@
 ###########################################
 import time
 # import shioaji.order as stOrder
-from dotenv import load_dotenv
 import shioaji as sj
 from typing import Dict, List, Optional
 from shioaji.constant import QuoteVersion, QUOTE_TYPE_BIDASK, QUOTE_TYPE_TICK, OrderState, Action, StockOrderCond, QuoteType
