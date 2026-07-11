@@ -223,7 +223,6 @@ def GridbotBody(api):
 
 # start here
 
-
 def main():
     production = os.environ.get("SJ_PRODUCTION", "false").lower() == "true"
     api = sj.Shioaji(simulation=not production)

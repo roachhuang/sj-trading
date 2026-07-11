@@ -1,7 +1,6 @@
 from datetime import date, datetime, timedelta
 import pickle
 
-
 def pickle_dump(filename, obj):
     try:
         with open(filename, "wb") as handle:
