@@ -18,6 +18,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
       - run: uv sync
+      # money.p is gitignored runtime state (bot1.money) that needs to carry
+      # over between daily runs. Cache entries are immutable per exact key,
+      # so key on the run id (always a fresh save) and fall back to the most
+      # recent previous run's cache via restore-keys.
+      - uses: actions/cache@v4
+        with:
+          path: money.p
+          key: money-p-${{ github.run_id }}
+          restore-keys: |
+            money-p-
       - run: uv run python -m sj_trading.gridbot_body
         env:
           SJ_API_KEY: ${{ secrets.SJ_API_KEY }}
