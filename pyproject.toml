@@ -1,0 +1,19 @@
+[project]
+name = "sj-trading"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Mark Huang", email = "giraftw2002@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "shioaji>=1.2.5",
+]
+
+[project.scripts]
+main = "gridbot_body:main"
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12.0"]
+build-backend = "uv_build"

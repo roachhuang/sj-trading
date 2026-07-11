@@ -1,0 +1,25 @@
+name: Gridbot Daily Run
+
+on:
+  schedule:
+    # 09:00 Asia/Taipei (UTC+8) = 01:00 UTC, Mon-Fri.
+    # GitHub cron can't skip Taiwan market holidays, so this still fires
+    # on non-trading days; the run will just fail/no-op against the API.
+    - cron: '0 1 * * 1-5'
+  workflow_dispatch: {}
+
+jobs:
+  run-gridbot:
+    runs-on: ubuntu-latest
+    # GridbotBody runs from ~9:00 to ~14:00 Taiwan time; give it headroom
+    # but keep a hard cap so a stuck run doesn't burn Actions minutes all day.
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      - run: uv run python -m sj_trading.gridbot_body
+        env:
+          SJ_API_KEY: ${{ secrets.SJ_API_KEY }}
+          SJ_SEC_KEY: ${{ secrets.SJ_SEC_KEY }}
+          SJ_PRODUCTION: "false"
