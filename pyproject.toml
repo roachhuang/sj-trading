@@ -9,6 +9,8 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "shioaji>=1.2.5",
+    "pandas",
+    "yfinance",
 ]
 
 [project.scripts]
