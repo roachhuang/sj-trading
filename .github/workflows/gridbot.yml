@@ -33,3 +33,14 @@ jobs:
           SJ_API_KEY: ${{ secrets.SJ_API_KEY }}
           SJ_SEC_KEY: ${{ secrets.SJ_SEC_KEY }}
           SJ_PRODUCTION: "false"
+      # gridbot.log/shioaji.log only exist on the runner's local disk and are
+      # otherwise lost once the job ends; upload them even on failure/timeout
+      # since that's exactly when they're needed most.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gridbot-logs-${{ github.run_id }}
+          path: |
+            gridbot.log
+            shioaji.log
+          if-no-files-found: ignore
