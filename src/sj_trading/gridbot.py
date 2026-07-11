@@ -1,7 +1,6 @@
 import pandas as pd
 import shioaji as sj
 import shioaji.order as stOrder
-import shioaji.shioaji
 import yfinance as yf
 
 from typing import Dict, List, Optional
