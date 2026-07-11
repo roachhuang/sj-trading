@@ -55,7 +55,7 @@ class GridBot:
     # statlist: List
     # msglist: List
 
-    def __init__(self, api: shioaji.Shioaji, logging):
+    def __init__(self, api: sj.Shioaji, logging):
         # keep track of MA calulated date
         self.year = self.month = self.day = 0
         self.trigger = 2000  # 最低交易金額門檻,避免交易金額太小,錢被手續費低消吃光光
