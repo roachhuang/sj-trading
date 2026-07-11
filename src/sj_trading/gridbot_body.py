@@ -4,10 +4,10 @@
 import time
 # import shioaji.order as stOrder
 import shioaji as sj
-from typing import Dict, List, Optional
+# from typing import Dict, List, Optional
 from shioaji.constant import QuoteVersion, QUOTE_TYPE_BIDASK, QUOTE_TYPE_TICK, OrderState, Action, StockOrderCond, QuoteType
 import logging
-import pickle
+# import pickle
 import datetime
 import time
 from threading import Lock
@@ -70,6 +70,17 @@ def GridbotBody(api):
         stockPrice[g_lowerid]*bot1.lowershare
     # 更新Trigger大小,在資產很多的時候固定2000會有點少
     bot1.trigger = max(2000, totalcapital*0.005)
+
+    def log_daily_pnl():
+        end_capital = bot1.money + \
+            stockPrice[g_upperid]*bot1.uppershare + \
+            stockPrice[g_lowerid]*bot1.lowershare
+        pnl = end_capital - totalcapital
+        pnl_pct = pnl / totalcapital * 100 if totalcapital else 0
+        logging.info(
+            f"daily P&L: start_capital={totalcapital:.2f}, end_capital={end_capital:.2f}, "
+            f"pnl={pnl:.2f} ({pnl_pct:.2f}%)"
+        )
     print("init money: {:.2f}".format(bot1.initmoney))
     print("uppershare: {:.2f}".format(stockPrice[g_upperid]*bot1.uppershare))
     print("lowershare: {:.2f}".format(stockPrice[g_lowerid]*bot1.lowershare))
@@ -157,6 +168,7 @@ def GridbotBody(api):
                 continue
             # it is allowed to place next-day orders after 3pm.
             if (hour >= 14 and hour <= 15):
+                log_daily_pnl()
                 misc.pickle_dump("money.p", bot1.money)
                 break
             # if premarket is True, orders can be place out of mkt hrs.
@@ -197,6 +209,7 @@ def GridbotBody(api):
     except KeyboardInterrupt:
         print("\n my Ctrl-C detected. Exiting gracefully...")
         bot1.cancelOrders()
+        log_daily_pnl()
         misc.pickle_dump("money.p", bot1.money)
         try:
             api.logout()

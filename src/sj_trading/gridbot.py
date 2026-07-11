@@ -31,29 +31,6 @@ class GridBot:
         "LowerLimitPosition": 0.899999,
         "BiasPeriod": 73,
     }
-    # year: int
-    # month: int
-    # day: int
-    # stockPrice: object
-    # stockBid: object
-    # stockAsk: object
-    # upperprice: int
-    # uppershare: int
-    # lowerprice: int
-    # lowershare: int
-    # uppershareTarget: int
-    # lowershareTarget: int
-    # trigger: int  # 最低交易金額門檻,避免交易金額太小,錢被手續費低消吃光光
-    # money: int
-    # initmoney: int
-    # contractUpper: any
-    # contractLower: any
-    # api: shioaji.Shioaji
-    # mutexgSettle: any
-    # mutexmsg: any
-    # mutexstat: any
-    # statlist: List
-    # msglist: List
 
     def __init__(self, api: sj.Shioaji, logging):
         # keep track of MA calulated date
@@ -84,7 +61,6 @@ class GridBot:
             isUpper = code == g_upperid
             isLower = code == g_lowerid
             if isUpper or isLower:
-                print(f"stk deal: {stat.StockDeal.value}, msg:{msg}")
                 # global g_settlement
                 action = msg["action"]
                 price = msg["price"]
@@ -98,10 +74,10 @@ class GridBot:
                     pass
                 self.money = self.initmoney + self.g_settlement
                 self.mutexgSettle.release()
+                self.logging.info(f"deal: {code} {action} {quantity}@{price}, money now: {self.money}")
         self.mutexmsg.acquire()
         try:
             self.msglist.append(msg)
-            self.logging.info(f"in order_cb, {msg}")
         except Exception as e:  # work on python 3.x
             self.logging.error("place_cb  Error Message A: " + str(e))
         self.mutexmsg.release()
@@ -109,7 +85,7 @@ class GridBot:
         self.mutexstat.acquire()
         try:
             self.statlist.append(stat)
-            self.logging.info(f" in ord_cb stlist: {self.statlist}")
+            self.logging.info(f"in order_cb, stat: {stat}")
         except Exception as e:  # work on python 3.x
             self.logging.error("place_cb  Error Message B: " + str(e))
         self.mutexstat.release()
