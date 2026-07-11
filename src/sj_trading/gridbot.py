@@ -123,7 +123,7 @@ class GridBot:
         if now.year != self.year or now.month != self.month or now.day != self.day:
             # 從Yfinance抓取日資料
             upper = yf.Ticker(self.upperid + ".tw")
-            upper_hist = upper.history(period="3mo")
+            upper_hist = upper.history(period="6mo")
 
             # 計算均線
             period = self.parameters["BiasPeriod"]
@@ -133,12 +133,12 @@ class GridBot:
             # 先計算 股票A / 股票B 的收盤價，再取平均
             if self.lowerid != "Cash":
                 lower = yf.Ticker(self.lowerid + ".tw")
-                lower_hist = lower.history(period="3mo")
+                lower_hist = lower.history(period="6mo")
                 lower_close = lower_hist["Close"]
                 close = (upper_close / lower_close).dropna()
             else:
                 close = upper_close.dropna()
-            self.MA = close[-period:].sum() / period
+            self.MA = close[-period:].mean()
             self.year = now.year
             self.month = now.month
             self.day = now.day
@@ -367,7 +367,7 @@ class GridBot:
                             qty=quantityUpper,
                         )
                         trade = self.api.place_order(contract, order)
-                        self.logging.info(f"{direction} {code} @ {order.price}, qty: {order.quantity}")
+                        self.logging.info(f"BUY {code} @ {order.price}, qty: {order.quantity}")
                 else:
                     order = self.createOrdObj(
                         symbol=self.upperid,
@@ -375,7 +375,7 @@ class GridBot:
                         qty=abs(quantityUpper),
                     )
                     trade = self.api.place_order(contract, order)
-                    self.logging.info(f"{direction} {code} @ {order.price}, qty: {order.quantity}")
+                    self.logging.info(f"SELL {code} @ {order.price}, qty: {order.quantity}")
 
         # 這邊開始掛分母的單
         # 首先確保掛單的量不會把交割款用完
