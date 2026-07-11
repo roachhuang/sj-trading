@@ -215,7 +215,7 @@ def main():
     api.login(
             api_key=os.environ["SJ_API_KEY"],
             secret_key=os.environ["SJ_SEC_KEY"],
-            fetch_contract=False
+            fetch_contract=True
         )
     if production:
         api.activate_ca(
