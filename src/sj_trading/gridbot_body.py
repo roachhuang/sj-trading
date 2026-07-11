@@ -16,8 +16,11 @@ from shioaji import BidAskSTKv1, Exchange, TickSTKv1
 
 ####################################################
 import os
+from dotenv import load_dotenv
 import sj_trading.misc as misc
 import sj_trading.gridbot as gridbot
+
+load_dotenv()
 
 g_upperid = '0052'
 g_lowerid = '00662'

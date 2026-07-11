@@ -11,10 +11,11 @@ dependencies = [
     "shioaji>=1.2.5",
     "pandas",
     "yfinance",
+    "python-dotenv",
 ]
 
 [project.scripts]
-main = "gridbot_body:main"
+main = "sj_trading.gridbot_body:main"
 
 [build-system]
 requires = ["uv_build>=0.11.28,<0.12.0"]
