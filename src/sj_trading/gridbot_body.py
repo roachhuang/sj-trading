@@ -222,21 +222,25 @@ def GridbotBody(api):
         exit
 
 # start here
-
 def main():
     production = os.environ.get("SJ_PRODUCTION", "false").lower() == "true"
     api = sj.Shioaji(simulation=not production)
     print(sj.__version__)
     api.login(
-            api_key=os.environ["SJ_API_KEY"],
-            secret_key=os.environ["SJ_SEC_KEY"],
-            fetch_contract=True
-        )
+        api_key=os.environ["SJ_API_KEY"],
+        secret_key=os.environ["SJ_SEC_KEY"],
+        fetch_contract=True,
+    )
     if production:
-        api.activate_ca(
-                ca_path=os.environ["SJ_CA_PATH"],
-                ca_passwd=os.environ["SJ_CA_PASSWD"],
-            )
+        SJ_CA_PATH = "Sinopac.pfx"
+        res = api.activate_ca(
+            ca_path=SJ_CA_PATH,
+            ca_passwd=os.environ["SJ_CA_PASSWD"],
+            person_id=os.environ["SJ_PERSON_ID"]
+        )
+        if not res:
+            raise RuntimeError("CA activation failed")
+        print(api.usage())
 
     # starting point of the code running
     GridbotBody(api)

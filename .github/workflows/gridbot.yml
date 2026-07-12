@@ -14,6 +14,8 @@ jobs:
     # GridbotBody runs from ~9:00 to ~14:00 Taiwan time; give it headroom
     # but keep a hard cap so a stuck run doesn't burn Actions minutes all day.
     timeout-minutes: 330
+    env:
+      SJ_PRODUCTION: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
@@ -28,11 +30,19 @@ jobs:
           key: money-p-${{ github.run_id }}
           restore-keys: |
             money-p-
+      # Only needed for live trading (SJ_PRODUCTION=true below). GitHub
+      # Actions has no native file-secret type, so the CA cert is stored
+      # base64-encoded in SJ_CA_PFX_B64 and decoded to disk here, at the
+      # relative path gridbot_body.py's activate_ca() call expects.
+      - name: Write CA certificate
+        if: env.SJ_PRODUCTION == 'true'
+        run: echo "${{ secrets.SJ_CA_PFX_B64 }}" | base64 -d > Sinopac.pfx
       - run: uv run python -m sj_trading.gridbot_body
         env:
           SJ_API_KEY: ${{ secrets.SJ_API_KEY }}
           SJ_SEC_KEY: ${{ secrets.SJ_SEC_KEY }}
-          SJ_PRODUCTION: "false"
+          SJ_CA_PASSWD: ${{ secrets.SJ_CA_PASSWD }}
+          SJ_PERSON_ID: ${{ secrets.SJ_PERSON_ID }}
       # gridbot.log/shioaji.log only exist on the runner's local disk and are
       # otherwise lost once the job ends; upload them even on failure/timeout
       # since that's exactly when they're needed most.
