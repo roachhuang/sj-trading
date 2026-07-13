@@ -56,4 +56,5 @@ When I correct you, or you catch yourself making a mistake: before continuing, a
 ## State that persists across runs
 
 - `money.p` — pickled cash balance (`bot1.money`), read at the start of each run and written at the natural 14:00–15:00 exit or on `KeyboardInterrupt`. Gitignored; treat as local/CI-ephemeral runtime state, not source.
+  - **Local and CI copies never sync.** A local edit (e.g. via `set_init_invest_amt.py`) has zero effect on the next CI run — CI only ever restores from its own `actions/cache` entry (previous CI run's save), never from your filesystem, since the two environments are fully isolated. To seed a specific balance into CI, manually dispatch the workflow with the `seed_money` input instead: `gh workflow run gridbot.yml -f seed_money=30000`.
 - `gridbot.log` — INFO-level log written during the trading loop (`*.log` is gitignored).
