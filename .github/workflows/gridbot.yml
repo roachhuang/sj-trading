@@ -18,6 +18,12 @@ jobs:
     timeout-minutes: 330
     env:
       SJ_PRODUCTION: "true"
+      # gridbot_body.py gates its trading loop on datetime.now() wall-clock
+      # hours (act 09:00-13:30, cancel at 13:2x, exit at 14-15). Runners
+      # default to UTC, which shifts those gates -8h: the exit window becomes
+      # 22:00 Taipei so the job dies at timeout-minutes instead of exiting
+      # cleanly, and money.p is never persisted.
+      TZ: Asia/Taipei
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
