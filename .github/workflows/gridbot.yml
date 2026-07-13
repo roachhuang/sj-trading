@@ -8,7 +8,14 @@ on:
     # GitHub cron can't skip Taiwan market holidays, so this still fires
     # on non-trading days; the run will just fail/no-op against the API.
     - cron: '30 0 * * 1-5'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      seed_money:
+        description: >-
+          Overwrite money.p with this cash balance (e.g. 30000) instead of
+          the cache-restored value. Leave empty for a normal run.
+        required: false
+        default: ""
 
 jobs:
   run-gridbot:
@@ -38,6 +45,20 @@ jobs:
           key: money-p-${{ github.run_id }}
           restore-keys: |
             money-p-
+      # Manual reseed of the bot's cash balance: overwrites whatever the
+      # cache restored, and the end-of-day save then carries the new value
+      # forward. Must run after the cache step above.
+      - name: Seed money.p
+        if: github.event.inputs.seed_money != ''
+        run: |
+          uv run python -c "
+          import pickle, sys
+          v = float('${{ github.event.inputs.seed_money }}')
+          v = int(v) if v.is_integer() else v
+          with open('money.p', 'wb') as f:
+              pickle.dump(v, f, protocol=pickle.HIGHEST_PROTOCOL)
+          print('seeded money.p with', v)
+          "
       # Only needed for live trading (SJ_PRODUCTION=true below). GitHub
       # Actions has no native file-secret type, so the CA cert is stored
       # base64-encoded in SJ_CA_PFX_B64 and decoded to disk here, at the

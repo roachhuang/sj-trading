@@ -61,6 +61,11 @@ def GridbotBody(api):
         bot1.initmoney = misc.pickle_read('money.p')
     except:
         bot1.initmoney = 0
+    # bot1.money starts at 0 in GridBot.__init__ and is otherwise only set
+    # inside order_cb on a fill; without this line, sendOrders sees no cash
+    # (all buys clipped to 0) and a no-fill day persists 0 to money.p,
+    # wiping the carried-over balance.
+    bot1.money = bot1.initmoney
     totalcapital = bot1.initmoney + \
         stockPrice[g_upperid]*bot1.uppershare + \
         stockPrice[g_lowerid]*bot1.lowershare
