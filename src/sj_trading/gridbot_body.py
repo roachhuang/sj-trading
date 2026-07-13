@@ -2,12 +2,8 @@
 # Ch7 網格交易機器人
 ###########################################
 import time
-# import shioaji.order as stOrder
 import shioaji as sj
-# from typing import Dict, List, Optional
-from shioaji.constant import QuoteVersion, QUOTE_TYPE_BIDASK, QUOTE_TYPE_TICK, OrderState, Action, StockOrderCond, QuoteType
 import logging
-# import pickle
 import datetime
 import time
 from threading import Lock
@@ -24,7 +20,7 @@ load_dotenv()
 
 g_upperid = '0052'
 g_lowerid = '00662'
-ENABLE_PREMARKET = True
+ENABLE_PREMARKET = False
 ans = ''
 
 def GridbotBody(api):
@@ -107,10 +103,10 @@ def GridbotBody(api):
     # 2.買賣價資料
     contract_Upper = api.Contracts.Stocks[g_upperid]
     contract_Lower = api.Contracts.Stocks[g_lowerid]
-    api.subscribe(contract_Lower, quote_type=QUOTE_TYPE_TICK, version=QuoteVersion.v1)
-    api.subscribe(contract_Upper, quote_type=QUOTE_TYPE_TICK, version=QuoteVersion.v1)
-    api.subscribe(contract_Lower, quote_type=QUOTE_TYPE_BIDASK, version=QuoteVersion.v1)
-    api.subscribe(contract_Upper, quote_type=QUOTE_TYPE_BIDASK, version=QuoteVersion.v1)
+    api.subscribe(contract_Lower, quote_type=sj.constant.QUOTE_TYPE_TICK, version=sj.QuoteVersion.v1)
+    api.subscribe(contract_Upper, quote_type=sj.constant.QUOTE_TYPE_TICK, version=sj.QuoteVersion.v1)
+    api.subscribe(contract_Lower, quote_type=sj.constant.QUOTE_TYPE_BIDASK, version=sj.QuoteVersion.v1)
+    api.subscribe(contract_Upper, quote_type=sj.constant.QUOTE_TYPE_BIDASK, version=sj.QuoteVersion.v1)
 
     @api.on_tick_stk_v1()
     def STKtick_callback(exchange: Exchange, tick: TickSTKv1):

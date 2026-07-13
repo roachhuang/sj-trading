@@ -1,10 +1,9 @@
-import pandas as pd
+# import pandas as pd
 import shioaji as sj
 import yfinance as yf
 
-from typing import Dict, List, Optional
-from shioaji.constant import OrderState, Action, StockOrderCond
-from shioaji import OrderStatus
+from typing import Dict, Optional
+from shioaji import OrderState, OrderStatus
 from threading import Lock
 import datetime
 
@@ -125,7 +124,7 @@ class GridBot:
     # 7.2 抓取庫存部位大小y
     #########################################
     def getPositions(self):             
-        positions = self.api.list_positions(self.api.stock_account, unit=sj.constant.Unit.Share)       
+        positions = self.api.list_positions(self.api.stock_account, unit=sj.Unit.Share)       
         self.lowershare = next((pos.quantity for pos in positions if pos.code == self.lowerid), 0)
         self.uppershare = next((pos.quantity for pos in positions if pos.code == self.upperid), 0)
         msg = f"positions: 00662-{self.lowershare}, 0052-{self.uppershare}"
@@ -296,14 +295,14 @@ class GridBot:
                 s = f"{tradeLower[i].status.status}/{tradeLower[i].status.cancel_quantity}"
                 self.logging.info(s)
 
-    def createOrdObj(self, symbol, direction, qty):
+    def createOrdObj(self, symbol, direction, qty):        
         return self.api.Order(
             price=self.stockBid[symbol],
             quantity=qty,
             action=direction,
-            price_type=sj.constant.StockPriceType.LMT,
-            order_type=sj.constant.OrderType.ROD,
-            order_lot=sj.constant.StockOrderLot.IntradayOdd,
+            price_type=sj.StockPriceType.LMT,
+            order_type=sj.OrderType.ROD,
+            order_lot=sj.StockOrderLot.IntradayOdd,
             account=self.api.stock_account,
         )
 
@@ -339,7 +338,7 @@ class GridBot:
 
                         order = self.createOrdObj(
                             symbol=self.upperid,
-                            direction=sj.constant.Action.Buy,
+                            direction=sj.Action.Buy,
                             qty=quantityUpper,
                         )
                         trade = self.api.place_order(contract, order)
@@ -347,7 +346,7 @@ class GridBot:
                 else:
                     order = self.createOrdObj(
                         symbol=self.upperid,
-                        direction=sj.constant.Action.Sell,
+                        direction=sj.Action.Sell,
                         qty=abs(quantityUpper),
                     )
                     trade = self.api.place_order(contract, order)
