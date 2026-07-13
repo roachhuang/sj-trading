@@ -295,8 +295,8 @@ class GridBot:
                 s = f"{tradeLower[i].status.status}/{tradeLower[i].status.cancel_quantity}"
                 self.logging.info(s)
 
-    def createOrdObj(self, symbol, direction, qty):        
-        return self.api.Order(
+    def createOrdObj(self, symbol, direction, qty):
+        return sj.StockOrder(
             price=self.stockBid[symbol],
             quantity=qty,
             action=direction,

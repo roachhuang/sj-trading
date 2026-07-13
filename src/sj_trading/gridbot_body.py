@@ -103,11 +103,11 @@ def GridbotBody(api):
     # 2.買賣價資料
     contract_Upper = api.Contracts.Stocks[g_upperid]
     contract_Lower = api.Contracts.Stocks[g_lowerid]
-    api.subscribe(contract_Lower, quote_type=sj.constant.QUOTE_TYPE_TICK, version=sj.QuoteVersion.v1)
-    api.subscribe(contract_Upper, quote_type=sj.constant.QUOTE_TYPE_TICK, version=sj.QuoteVersion.v1)
-    api.subscribe(contract_Lower, quote_type=sj.constant.QUOTE_TYPE_BIDASK, version=sj.QuoteVersion.v1)
-    api.subscribe(contract_Upper, quote_type=sj.constant.QUOTE_TYPE_BIDASK, version=sj.QuoteVersion.v1)
-
+    api.subscribe(contract_Lower, quote_type=sj.QuoteType.Tick, version=sj.QuoteVersion.v1)
+    api.subscribe(contract_Upper, quote_type=sj.QuoteType.Tick, version=sj.QuoteVersion.v1)
+    api.subscribe(contract_Lower, quote_type=sj.QuoteType.BidAsk, version=sj.QuoteVersion.v1)
+    api.subscribe(contract_Upper, quote_type=sj.QuoteType.BidAsk, version=sj.QuoteVersion.v1)
+    
     @api.on_tick_stk_v1()
     def STKtick_callback(exchange: Exchange, tick: TickSTKv1):
         code = tick['code']
