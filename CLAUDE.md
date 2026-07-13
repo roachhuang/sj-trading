@@ -28,6 +28,12 @@ Read from `.env` (gitignored, not committed) or process env:
 
 In CI (`.github/workflows/gridbot.yml`), `SJ_API_KEY`/`SJ_SEC_KEY` come from GitHub repo secrets and `SJ_PRODUCTION` is hardcoded to `"false"`, so scheduled runs are simulation-only until that's deliberately changed.
 
+## Self-learning
+
+When I correct you, or you catch yourself making a mistake: before continuing, add the lesson as a one-line rule under ## Lessons, so it never happens again.
+
+## Lessons
+
 ## Architecture
 
 **`src/sj_trading/gridbot_body.py`** — orchestration/entry point.
