@@ -12,6 +12,7 @@ dependencies = [
     "pandas",
     "yfinance",
     "python-dotenv",
+    "numpy",
 ]
 
 [project.scripts]

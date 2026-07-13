@@ -11,6 +11,7 @@ A grid-trading bot for Taiwan-listed ETFs (0052 / 00662) built on SinoPac's **Sh
 ```bash
 uv sync                                  # install/update deps into .venv
 uv run python -m sj_trading.gridbot_body # run the bot (needs SJ_API_KEY/SJ_SEC_KEY in env or .env)
+uv run python -m sj_trading.backtest     # backtest/grid-search GridBot.parameters against historical data
 uv lock                                  # regenerate uv.lock after editing dependencies in pyproject.toml
 ```
 
@@ -48,7 +49,9 @@ When I correct you, or you catch yourself making a mistake: before continuing, a
 
 **`src/sj_trading/misc.py`** — small utility grab-bag: pickle read/write (used to persist `bot1.money` in `money.p` across daily runs), a profit/fee calculator, tick-size lookup by price band, and date helpers. Not Shioaji-specific.
 
-**`.github/workflows/gridbot.yml`** — scheduled trigger at `0 1 * * 1-5` (01:00 UTC = 9:00am Taipei, Mon–Fri) plus manual `workflow_dispatch`. GitHub's cron has no concept of Taiwan market holidays, so it still fires on holidays (harmless no-op against the API that day). `timeout-minutes: 330` caps a run in case the wall-clock exit logic above doesn't fire as expected.
+**`src/sj_trading/backtest.py`** — offline research tool, not wired into the live bot. Replicates `calculateGrid`/`calculateSharetarget`/`sendOrders` day-by-day over historical daily closes (trigger threshold, ±999 share clamp, cash-constrained sizing, realistic fees included), and grid-searches the five `GridBot.parameters` values. `GridBot.parameters` was last set from this tool's output (backtested 2016–2026, out-of-sample validated on a held-out 2023–2026 slice) — re-run every 6–12 months, or sooner if live daily P&L (see below) diverges meaningfully from backtested expectations, since parameters fit to one historical window can drift out of tune as market regimes shift.
+
+**`.github/workflows/gridbot.yml`** — scheduled trigger at `50 0 * * 1-5` (00:50 UTC = 8:50am Taipei, deliberately off the top-of-hour mark since exact-hour slots are more prone to delay/drop) plus manual `workflow_dispatch`. GitHub's cron has no concept of Taiwan market holidays, so it still fires on holidays (harmless no-op against the API that day). `timeout-minutes: 330` caps a run in case the wall-clock exit logic above doesn't fire as expected.
 
 ## State that persists across runs
 
