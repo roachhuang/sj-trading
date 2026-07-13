@@ -1,10 +1,10 @@
 import pandas as pd
 import shioaji as sj
-import shioaji.order as stOrder
 import yfinance as yf
 
 from typing import Dict, List, Optional
 from shioaji.constant import OrderState, Action, StockOrderCond
+from shioaji import OrderStatus
 from threading import Lock
 import datetime
 
@@ -264,14 +264,14 @@ class GridBot:
             thistrade = tradelist[i]
             thisstatus = thistrade.status.status
             # 單子的狀態太多種,先列出來
-            isCancelled = thisstatus == stOrder.Status.Cancelled
-            isFailed = thisstatus == stOrder.Status.Failed
-            isFilled = thisstatus == stOrder.Status.Filled
-            isInactive = thisstatus == stOrder.Status.Inactive
-            isPartFilled = thisstatus == stOrder.Status.PartFilled
-            isPendingSubmit = thisstatus == stOrder.Status.PendingSubmit
-            isPreSubmitted = thisstatus == stOrder.Status.PreSubmitted
-            isSubmitted = thisstatus == stOrder.Status.Submitted
+            isCancelled = thisstatus == OrderStatus.Cancelled
+            isFailed = thisstatus == OrderStatus.Failed
+            isFilled = thisstatus == OrderStatus.Filled
+            isInactive = thisstatus == OrderStatus.Inactive
+            isPartFilled = thisstatus == OrderStatus.PartFilled
+            isPendingSubmit = thisstatus == OrderStatus.PendingSubmit
+            isPreSubmitted = thisstatus == OrderStatus.PreSubmitted
+            isSubmitted = thisstatus == OrderStatus.Submitted
 
             # 把交易股票種類跟交易機器人一樣的有效訂單取消
             cond1 = not (isCancelled or isFailed or isFilled)
