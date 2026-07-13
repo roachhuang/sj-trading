@@ -2,10 +2,12 @@ name: Gridbot Daily Run
 
 on:
   schedule:
-    # 09:00 Asia/Taipei (UTC+8) = 01:00 UTC, Mon-Fri.
+    # 08:30 Asia/Taipei (UTC+8) = 00:30 UTC, Mon-Fri. Off the top-of-hour
+    # mark deliberately -- GitHub Actions scheduled runs are most prone to
+    # delay/drop at exact-hour slots under high load.
     # GitHub cron can't skip Taiwan market holidays, so this still fires
     # on non-trading days; the run will just fail/no-op against the API.
-    - cron: '0 1 * * 1-5'
+    - cron: '30 0 * * 1-5'
   workflow_dispatch: {}
 
 jobs:
