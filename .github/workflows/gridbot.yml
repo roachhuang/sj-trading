@@ -17,6 +17,16 @@ on:
         required: false
         default: ""
 
+# SJ_PRODUCTION=true below means every trigger (schedule or manual) places
+# real orders. Without this, a manual workflow_dispatch overlapping with a
+# delayed/late-firing schedule run (or two manual runs) would run two live
+# trading sessions against the same account in parallel. cancel-in-progress
+# is false deliberately: forcibly killing a live run mid-order-placement is
+# worse than making the second trigger wait its turn.
+concurrency:
+  group: gridbot-live-trading
+  cancel-in-progress: false
+
 jobs:
   run-gridbot:
     runs-on: ubuntu-latest
