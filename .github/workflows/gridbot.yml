@@ -12,14 +12,14 @@ on:
     inputs:
       seed_money:
         description: >-
-          Overwrite money.p with this cash balance (e.g. 30000) instead of
-          the cache-restored value. Leave empty for a normal run.
+          Overwrite money.json with this cash balance (e.g. 30000) instead
+          of the committed value. Leave empty for a normal run.
         required: false
         default: ""
       seed_only:
         description: >-
-          Save seed_money to the cache and stop, skipping the live trading
-          run entirely. Use this to correct money.p without placing orders.
+          Write seed_money to money.json and stop, skipping the live trading
+          run entirely. Use this to correct money.json without placing orders.
         required: false
         default: false
         type: boolean
@@ -35,14 +35,11 @@ concurrency:
   cancel-in-progress: false
 
 # Repo default is "Read repository contents and packages permissions"
-# (restricted) - actions/cache and actions/upload-artifact both need write
-# access to function (cache save, artifact upload), which falls under the
-# `actions` scope specifically, not `contents`. Set explicitly here rather
-# than flipping the whole repo to the broader "read and write" default,
-# since this workflow doesn't need write access to anything else (issues,
-# pull-requests, packages, etc.).
+# (restricted). actions/upload-artifact needs write access under the
+# `actions` scope specifically, not `contents`. contents: write is needed
+# separately, for this workflow's own commit-back of money.json below.
 permissions:
-  contents: read
+  contents: write
   actions: write
 
 jobs:
@@ -57,35 +54,28 @@ jobs:
       # hours (act 09:00-13:30, cancel at 13:2x, exit at 14-15). Runners
       # default to UTC, which shifts those gates -8h: the exit window becomes
       # 22:00 Taipei so the job dies at timeout-minutes instead of exiting
-      # cleanly, and money.p is never persisted.
+      # cleanly, and money.json is never persisted.
       TZ: Asia/Taipei
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
       - run: uv sync
-      # money.p is gitignored runtime state (bot1.money) that needs to carry
-      # over between daily runs. Cache entries are immutable per exact key,
-      # so key on the run id (always a fresh save) and fall back to the most
-      # recent previous run's cache via restore-keys.
-      - uses: actions/cache@v4
-        with:
-          path: money.p
-          key: money-p-${{ github.run_id }}
-          restore-keys: |
-            money-p-
-      # Manual reseed of the bot's cash balance: overwrites whatever the
-      # cache restored, and the end-of-day save then carries the new value
-      # forward. Must run after the cache step above.
-      - name: Seed money.p
+      # money.json (bot1.money) is a tracked file, not gitignored runtime
+      # state -- checkout above already gives each run the balance the
+      # previous run committed back. This makes it directly readable/editable
+      # (git history, GitHub web UI) without needing a workflow run to
+      # inspect or correct it, and avoids actions/cache's 7-day inactivity
+      # eviction, which could silently reset the balance after a holiday gap.
+      - name: Seed money.json
         if: github.event.inputs.seed_money != ''
         run: |
           uv run python -c "
-          import pickle, sys
+          import json
           v = float('${{ github.event.inputs.seed_money }}')
           v = int(v) if v.is_integer() else v
-          with open('money.p', 'wb') as f:
-              pickle.dump(v, f, protocol=pickle.HIGHEST_PROTOCOL)
-          print('seeded money.p with', v)
+          with open('money.json', 'w') as f:
+              json.dump(v, f)
+          print('seeded money.json with', v)
           "
       # Only needed for live trading (SJ_PRODUCTION=true below). GitHub
       # Actions has no native file-secret type, so the CA cert is stored
@@ -101,6 +91,24 @@ jobs:
           SJ_SEC_KEY: ${{ secrets.SJ_SEC_KEY }}
           SJ_CA_PASSWD: ${{ secrets.SJ_CA_PASSWD }}
           SJ_PERSON_ID: ${{ secrets.SJ_PERSON_ID }}
+      # gridbot_body.py rewrites money.json locally at its natural 14:00-15:00
+      # exit, on KeyboardInterrupt, or via the seed step above; commit that
+      # back so the next run's checkout picks it up. if: always() covers the
+      # seed-only path (gridbot_body didn't run) and normal-failure paths;
+      # a hard-cancelled job still can't reach this step, same limitation
+      # actions/cache had. The diff check makes a no-op run a no-op commit.
+      - name: Persist money.json
+        if: always()
+        run: |
+          if ! git diff --quiet -- money.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add money.json
+            git commit -m "Update money.json ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+            git push origin HEAD:${{ github.ref_name }}
+          else
+            echo "money.json unchanged, nothing to commit"
+          fi
       # gridbot.log/shioaji.log only exist on the runner's local disk and are
       # otherwise lost once the job ends; upload them even on failure/timeout
       # since that's exactly when they're needed most.

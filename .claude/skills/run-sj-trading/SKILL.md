@@ -73,7 +73,7 @@ Runs the actual daily trading loop — intended to be started once in
 the morning and left running until early afternoon (see `CLAUDE.md`).
 Not something to run to completion outside that context; `Ctrl-C` to
 stop early (triggers its `KeyboardInterrupt` cleanup path, which
-persists `money.p`).
+persists `money.json`).
 
 ## Test
 

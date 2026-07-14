@@ -1,32 +1,32 @@
 from datetime import date, datetime, timedelta
-import pickle
+import json
 
-def pickle_dump(filename, obj):
+def write_json(filename, obj):
     try:
-        with open(filename, "wb") as handle:
-            pickle.dump(obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(filename, "w") as handle:
+            json.dump(obj, handle)
     except Exception as e:
         print(f"An error occurred: {e}")
 
-def pickle_read(filename):
-    """Reads capital record from a file using pickle.
+def read_json(filename):
+    """Reads capital record from a JSON file.
 
     Args:
-        filename (str): The name of the file containing the pickled data.
+        filename (str): The name of the file containing the JSON data.
 
     Returns:
-        object: The unpickled data (OrderRecord.money in this case).
+        object: The decoded data (OrderRecord.money in this case).
 
     Raises:
-        pickle.UnpicklingError: If an error occurs during unpickling.
-        IOError: If an error occurs while reading the file.
+        ValueError: If an error occurs while parsing the JSON.
+        FileNotFoundError: If an error occurs while reading the file.
     """
     try:
-        with open(filename, "rb") as handle:
-            return pickle.load(handle)
-    except pickle.UnpicklingError as e:
+        with open(filename) as handle:
+            return json.load(handle)
+    except json.JSONDecodeError as e:
         raise ValueError(
-            f"Error unpickling capital record: {e}"
+            f"Error parsing capital record: {e}"
         ) from e  # Chain the original exception
     except IOError as e:
         raise FileNotFoundError(

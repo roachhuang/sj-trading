@@ -58,12 +58,12 @@ def GridbotBody(api):
     bot1.getPositions()
 
     try:
-        bot1.initmoney = misc.pickle_read('money.p')
+        bot1.initmoney = misc.read_json('money.json')
     except:
         bot1.initmoney = 0
     # bot1.money starts at 0 in GridBot.__init__ and is otherwise only set
     # inside order_cb on a fill; without this line, sendOrders sees no cash
-    # (all buys clipped to 0) and a no-fill day persists 0 to money.p,
+    # (all buys clipped to 0) and a no-fill day persists 0 to money.json,
     # wiping the carried-over balance.
     bot1.money = bot1.initmoney
     totalcapital = bot1.initmoney + \
@@ -170,7 +170,7 @@ def GridbotBody(api):
             # it is allowed to place next-day orders after 3pm.
             if (hour >= 14 and hour <= 15):
                 log_daily_pnl()
-                misc.pickle_dump("money.p", bot1.money)
+                misc.write_json("money.json", bot1.money)
                 break
             # if premarket is True, orders can be place out of mkt hrs.
             if (not ENABLE_PREMARKET):
@@ -211,7 +211,7 @@ def GridbotBody(api):
         print("\n my Ctrl-C detected. Exiting gracefully...")
         bot1.cancelOrders()
         log_daily_pnl()
-        misc.pickle_dump("money.p", bot1.money)
+        misc.write_json("money.json", bot1.money)
         try:
             api.logout()
         except Exception as e:
