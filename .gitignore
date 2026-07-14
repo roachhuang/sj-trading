@@ -221,3 +221,7 @@ __marimo__/
 money.p
 *.pfx
 
+# Claude Code: machine/session-specific, not shared project tooling
+.claude/settings.local.json
+.claude/worktrees/
+
