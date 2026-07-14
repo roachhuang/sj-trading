@@ -27,6 +27,17 @@ concurrency:
   group: gridbot-live-trading
   cancel-in-progress: false
 
+# Repo default is "Read repository contents and packages permissions"
+# (restricted) - actions/cache and actions/upload-artifact both need write
+# access to function (cache save, artifact upload), which falls under the
+# `actions` scope specifically, not `contents`. Set explicitly here rather
+# than flipping the whole repo to the broader "read and write" default,
+# since this workflow doesn't need write access to anything else (issues,
+# pull-requests, packages, etc.).
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   run-gridbot:
     runs-on: ubuntu-latest
