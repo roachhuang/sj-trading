@@ -16,6 +16,13 @@ on:
           the cache-restored value. Leave empty for a normal run.
         required: false
         default: ""
+      seed_only:
+        description: >-
+          Save seed_money to the cache and stop, skipping the live trading
+          run entirely. Use this to correct money.p without placing orders.
+        required: false
+        default: false
+        type: boolean
 
 # SJ_PRODUCTION=true below means every trigger (schedule or manual) places
 # real orders. Without this, a manual workflow_dispatch overlapping with a
@@ -85,9 +92,10 @@ jobs:
       # base64-encoded in SJ_CA_PFX_B64 and decoded to disk here, at the
       # relative path gridbot_body.py's activate_ca() call expects.
       - name: Write CA certificate
-        if: env.SJ_PRODUCTION == 'true'
+        if: env.SJ_PRODUCTION == 'true' && github.event.inputs.seed_only != 'true'
         run: echo "${{ secrets.SJ_CA_PFX_B64 }}" | base64 -d > Sinopac.pfx
       - run: uv run python -m sj_trading.gridbot_body
+        if: github.event.inputs.seed_only != 'true'
         env:
           SJ_API_KEY: ${{ secrets.SJ_API_KEY }}
           SJ_SEC_KEY: ${{ secrets.SJ_SEC_KEY }}
