@@ -61,11 +61,13 @@ def GridbotBody(api):
         bot1.initmoney = misc.read_json('money.json')
     except:
         bot1.initmoney = 0
-    # bot1.money starts at 0 in GridBot.__init__ and is otherwise only set
+    # bot1.live_cash_right_now starts at 0 in GridBot.__init__ and is otherwise only set
     # inside order_cb on a fill; without this line, sendOrders sees no cash
     # (all buys clipped to 0) and a no-fill day persists 0 to money.json,
     # wiping the carried-over balance.
-    bot1.money = bot1.initmoney
+    # 昨天剩下的 cash =今天可用的 cash
+    bot1.live_cash_right_now = bot1.initmoney
+    # capital @ this point in time, not necessary today's mkt open prices coz github's delaylaunch 
     totalcapital = bot1.initmoney + \
         stockPrice[g_upperid]*bot1.uppershare + \
         stockPrice[g_lowerid]*bot1.lowershare
@@ -73,7 +75,7 @@ def GridbotBody(api):
     bot1.trigger = max(2000, totalcapital*0.005)
 
     def log_daily_pnl():
-        end_capital = bot1.money + \
+        end_capital = bot1.live_cash_right_now + \
             stockPrice[g_upperid]*bot1.uppershare + \
             stockPrice[g_lowerid]*bot1.lowershare
         pnl = end_capital - totalcapital
@@ -82,9 +84,9 @@ def GridbotBody(api):
             f"daily P&L: start_capital={totalcapital:.2f}, end_capital={end_capital:.2f}, "
             f"pnl={pnl:.2f} ({pnl_pct:.2f}%)"
         )
-    print("init money: {:.2f}".format(bot1.initmoney))
-    print("uppershare: {:.2f}".format(stockPrice[g_upperid]*bot1.uppershare))
-    print("lowershare: {:.2f}".format(stockPrice[g_lowerid]*bot1.lowershare))
+    print("starting cash for today's run: {:.2f}".format(bot1.initmoney))
+    print("uppershare value: {:.2f}".format(stockPrice[g_upperid]*bot1.uppershare))
+    print("lowershare value: {:.2f}".format(stockPrice[g_lowerid]*bot1.lowershare))
     print("totalcapital: {:.2f}".format(totalcapital))
     # 決定要不要新增更多資金進交易機器人裡, ans won't be '' after 2nd round.
     # here declare ans as global is for updating the global value of ans
@@ -95,7 +97,7 @@ def GridbotBody(api):
     #         amount = input(
     #             "withdraw or deposit amount(>0:deposit,<0:withdraw):\n")
     #         bot1.initmoney = bot1.initmoney+int(amount)
-    # bot1.money = bot1.initmoney
+    # bot1.live_cash_right_now = bot1.initmoney
 
     # 用來處理多線程的變數,在更新價格和訂單成交回報時會用到
     # It contains Lock objects associated with identifiers g_upperid and g_lowerid. These locks are used to synchronize
@@ -170,7 +172,8 @@ def GridbotBody(api):
             # it is allowed to place next-day orders after 3pm.
             if (hour >= 14 and hour <= 15):
                 log_daily_pnl()
-                misc.write_json("money.json", bot1.money)
+                # live available cash after execution 
+                misc.write_json("money.json", bot1.live_cash_right_now)
                 break
             # Two unrelated guards share this one flag:
             # - hour<9 = premarket gate (pre-open call auction, before 9:00)
@@ -217,7 +220,7 @@ def GridbotBody(api):
         print("\n my Ctrl-C detected. Exiting gracefully...")
         bot1.cancelOrders()
         log_daily_pnl()
-        misc.write_json("money.json", bot1.money)
+        misc.write_json("money.json", bot1.live_cash_right_now)
         try:
             api.logout()
         except Exception as e:

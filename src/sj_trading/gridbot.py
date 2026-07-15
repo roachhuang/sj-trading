@@ -46,7 +46,7 @@ class GridBot:
         self.initmoney = self.g_settlement = 0
         self.upperid = g_upperid
         self.lowerid = g_lowerid
-        self.money = self.upperprice = self.uppershare = self.lowerprice = self.lowershare = 0
+        self.live_cash_right_now = self.upperprice = self.uppershare = self.lowerprice = self.lowershare = 0
         self.contractUpper = api.Contracts.Stocks[self.upperid]
         self.contractLower = api.Contracts.Stocks[self.lowerid]
         self.api = api
@@ -76,9 +76,9 @@ class GridBot:
                     self.g_settlement += price * qty
                 else:
                     pass
-                self.money = int(self.initmoney + self.g_settlement)
+                self.live_cash_right_now = int(self.initmoney + self.g_settlement)
                 self.mutexgSettle.release()
-                self.logging.info(f"deal: {code} {action} {qty}@{price}, live available cash right now: {self.money}")
+                self.logging.info(f"deal: {code} {action} {qty}@{price}, live available cash right now: {self.live_cash_right_now}")
         self.mutexmsg.acquire()
         try:
             self.msglist.append(msg)
@@ -140,14 +140,14 @@ class GridBot:
         shareTarget = self.calculateGrid(upperprice, lowerprice)
 
         # move to order_cb
-        # self.money=self.initmoney+self.g_settlement
+        # self.live_cash_right_now=self.initmoney+self.g_settlement
         # no reset settlement after update money is required coz of using initmoney
 
         uppershare = self.uppershare
         lowershare = self.lowershare
 
         # 計算機器人裡面有多少資產(可用現金+股票現值)
-        capitalInBot = self.money + uppershare * upperprice + lowershare * lowerprice
+        capitalInBot = self.live_cash_right_now + uppershare * upperprice + lowershare * lowerprice
 
         # 計算目標部位(股數)
         uppershareTarget = int(shareTarget * capitalInBot / upperprice)
@@ -293,16 +293,16 @@ class GridBot:
         quantityLower = max(min(self.lowershareTarget - self.lowershare, 999), -999)
 
         # available tracks cash across both legs THIS cycle only - fills are
-        # async (order_cb), so self.money won't reflect the upper leg's cost
+        # async (order_cb), so self.live_cash_right_now won't reflect the upper leg's cost
         # in time for the lower leg's check without this.
-        available = self._sendOneOrder(self.upperid, quantityUpper, self.money)
-        if self.lowerid != "Cash":
-            self._sendOneOrder(self.lowerid, quantityLower, available)
+        available = self._sendOneOrder(self.upperid, quantityUpper, self.live_cash_right_now)
+        self._sendOneOrder(self.lowerid, quantityLower, available)
 
     def _sendOneOrder(self, code, qty, available):
         price = self.stockBid[code]
         if qty > 0 and available < price * qty:
             qty = max(int(available / price), 0)
+        # trigger=NT$2000 as a preventative of commision.
         if qty == 0 or abs(qty) * self.stockPrice[code] < self.trigger:
             return available
 
