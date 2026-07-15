@@ -123,7 +123,7 @@ class GridBot:
             self.month = now.month
             self.day = now.day
             s = "MA:" + str(self.MA)
-            self.logging.info(s)
+            # self.logging.info(s)
 
     #########################################
     # 7.2 抓取庫存部位大小y
@@ -136,8 +136,8 @@ class GridBot:
             return
         self.lowershare = next((pos.quantity for pos in positions if pos.code == self.lowerid), 0)
         self.uppershare = next((pos.quantity for pos in positions if pos.code == self.upperid), 0)
-        msg = f"positions: 00662-{self.lowershare}, 0052-{self.uppershare}"
-        print(msg)
+        # msg = f"positions: 00662-{self.lowershare}, 0052-{self.uppershare}"
+        # print(msg)
 
     def calculateSharetarget(self, upperprice, lowerprice):
         # 計算目標部位百分比
@@ -203,7 +203,7 @@ class GridBot:
         shareTarget = shareTarget * (UpperLimitPosition - LowerLimitPosition) + LowerLimitPosition
         shareTarget = max(shareTarget, UpperLimitPosition)
         shareTarget = min(shareTarget, LowerLimitPosition)
-        print("0052 shareTaget:", shareTarget)
+        # print("0052 shareTaget:", shareTarget)
         return shareTarget
 
     #########################################
@@ -211,33 +211,26 @@ class GridBot:
     ###########################################
 
     def updateOrder(self):
-        try:
-            #################################
-            # 0.更新日均線資料
-            #################################
-            self.UpdateMA()
-            #################################
-            # 1.刪除掛單
-            ############################
-            self.cancelOrders()
-            #################################
-            # 2.更新庫存
-            ############################
-            self.getPositions()
-            ####################################
-            # 3.更新目標部位
-            ##############################
-            # it looks like current price
-            self.calculateSharetarget(
-                upperprice=self.stockPrice[g_upperid],
-                lowerprice=self.stockPrice[g_lowerid],
-            )
-            #######################################
-            # 4.掛單
-            ############################################
-            self.sendOrders()
-        except Exception as e:  # work on python 3.x
-            self.logging.info(" updateOrder Error Message: " + str(e))
+        #################################
+        # 0.更新日均線資料
+        #################################
+        self.UpdateMA()
+       
+        self.cancelOrders()
+        #################################
+        # 2.更新庫存
+        ############################
+        self.getPositions()
+        ####################################
+        # 3.更新目標部位
+        ##############################
+        # it looks like current price
+        self.calculateSharetarget(
+            upperprice=self.stockPrice[g_upperid],
+            lowerprice=self.stockPrice[g_lowerid],
+        )
+      
+        self.sendOrders()
 
     def cancelOrders(self):
         try:
@@ -278,18 +271,18 @@ class GridBot:
                 self.api.cancel_order(trade=tradeUpper[i])
                 self.api.update_status(self.api.stock_account)
                 s = f"{tradeUpper[i].status.status}/{tradeUpper[i].status.cancel_quantity}"
-                self.logging.info(s)
+                # self.logging.info(s)
             except Exception as e:
                 self.logging.error(f"cancel_order failed for upper trade {i}: {e}")
-        if self.lowerid != "Cash":
-            for i in range(0, len(tradeLower), 1):
-                try:
-                    self.api.cancel_order(trade=tradeLower[i])
-                    self.api.update_status(self.api.stock_account)
-                    s = f"{tradeLower[i].status.status}/{tradeLower[i].status.cancel_quantity}"
-                    self.logging.info(s)
-                except Exception as e:
-                    self.logging.error(f"cancel_order failed for lower trade {i}: {e}")
+        
+        for i in range(0, len(tradeLower), 1):
+            try:
+                self.api.cancel_order(trade=tradeLower[i])
+                self.api.update_status(self.api.stock_account)
+                s = f"{tradeLower[i].status.status}/{tradeLower[i].status.cancel_quantity}"
+                # self.logging.info(s)
+            except Exception as e:
+                self.logging.error(f"cancel_order failed for lower trade {i}: {e}")
 
     def createOrdObj(self, symbol, direction, qty):
         return sj.StockOrder(
@@ -332,7 +325,7 @@ class GridBot:
         except Exception as e:
             self.logging.error(f"place_order failed for {code} {direction} qty={abs(qty)}: {e}")
             return available
-        self.logging.info(f"{direction} {code} @ {order.price}, qty: {order.quantity}")
+        # self.logging.info(f"{direction} {code} @ {order.price}, qty: {order.quantity}")
 
         if qty > 0:
             available -= cost

@@ -85,10 +85,10 @@ def GridbotBody(api):
             f"daily P&L: start_capital={totalcapital:.2f}, end_capital={end_capital:.2f}, "
             f"pnl={pnl:.2f} ({pnl_pct:.2f}%)"
         )
-    print("starting cash for today's run: {:.2f}".format(bot1.initmoney))
-    print("uppershare value: {:.2f}".format(stockPrice[g_upperid]*bot1.uppershare))
-    print("lowershare value: {:.2f}".format(stockPrice[g_lowerid]*bot1.lowershare))
-    print("totalcapital: {:.2f}".format(totalcapital))
+    logging.info("starting cash for today's run: {:.2f}".format(bot1.initmoney))
+    logging.info("uppershare value: {:.2f}".format(stockPrice[g_upperid]*bot1.uppershare))
+    logging.info("lowershare value: {:.2f}".format(stockPrice[g_lowerid]*bot1.lowershare))
+    logging.info("totalcapital: {:.2f}".format(totalcapital))
     # 決定要不要新增更多資金進交易機器人裡, ans won't be '' after 2nd round.
     # here declare ans as global is for updating the global value of ans
     # global ans
@@ -221,7 +221,7 @@ def GridbotBody(api):
             bot1.updateOrder()
 
     except KeyboardInterrupt:
-        print("\n my Ctrl-C detected. Exiting gracefully...")
+        logging.warning("\n Ctrl-C detected. Exiting gracefully...")
         try:
             bot1.cancelOrders()
         except Exception as e:
@@ -238,7 +238,6 @@ def GridbotBody(api):
         finally:
             print(
                 "This code is always executed, regardless of whether an exception occurred or not")
-        print('end')
         exit
 
 # start here
@@ -269,8 +268,10 @@ def main():
     # Log out and exit here so a scheduled run (e.g. triggered once per
     # trading day) terminates instead of waiting for a 16:00 reboot or
     # looping until Friday.
-    api.logout()
-
+    try:
+        api.logout()
+    except Exception as e:
+        logging.error(f"failed to call api.logout: {e}")
 
 if __name__ == '__main__':
     main()
