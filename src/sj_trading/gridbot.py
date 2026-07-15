@@ -68,17 +68,17 @@ class GridBot:
                 # global g_settlement
                 action = msg["action"]
                 price = msg["price"]
-                quantity = msg["quantity"]
+                qty = msg["quantity"]
                 self.mutexgSettle.acquire()
                 if action == "Buy":
-                    self.g_settlement -= price * quantity
+                    self.g_settlement -= price * qty
                 elif action == "Sell":
-                    self.g_settlement += price * quantity
+                    self.g_settlement += price * qty
                 else:
                     pass
-                self.money = self.initmoney + self.g_settlement
+                self.money = int(self.initmoney + self.g_settlement)
                 self.mutexgSettle.release()
-                self.logging.info(f"deal: {code} {action} {quantity}@{price}, money now: {self.money}")
+                self.logging.info(f"deal: {code} {action} {qty}@{price}, live available cash right now: {self.money}")
         self.mutexmsg.acquire()
         try:
             self.msglist.append(msg)
@@ -135,28 +135,6 @@ class GridBot:
         msg = f"positions: 00662-{self.lowershare}, 0052-{self.uppershare}"
         print(msg)
 
-    # def getPositions(self):
-    #     # self.api.update_status(self.api.stock_account)
-    #     # print('list trade:', api.list_trades())
-    #     portfolio = self.api.list_positions(self.api.stock_account, unit=sj.constant.Unit.Share)
-    #     # df_positions = pd.DataFrame(portfolio)
-    #     df_positions = pd.DataFrame(s.__dict__ for s in portfolio)
-    #     ser_quantity = df_positions.loc[df_positions["code"] == self.upperid]["quantity"]
-    #     if ser_quantity.size == 0:
-    #         self.uppershare = 0
-    #     else:
-    #         print("ser_qty_size:", ser_quantity.size)
-    #         self.uppershare = int(ser_quantity.iloc[0])
-
-    #     if self.lowerid != "Cash":
-    #         ser_quantity = df_positions.loc[df_positions["code"] == self.lowerid]["quantity"]
-    #         if ser_quantity.size == 0:
-    #             self.lowershare = 0
-    #         else:
-    #             self.lowershare = int(ser_quantity.iloc[0])
-    #     msg = f"positions: 00662-{self.lowershare}, 0052-{self.uppershare}"
-    #     print(msg)
-
     def calculateSharetarget(self, upperprice, lowerprice):
         # 計算目標部位百分比
         shareTarget = self.calculateGrid(upperprice, lowerprice)
@@ -167,10 +145,9 @@ class GridBot:
 
         uppershare = self.uppershare
         lowershare = self.lowershare
-        money = self.money
 
-        # 計算機器人裡面有多少資產(現金+股票)
-        capitalInBot = money + uppershare * upperprice + lowershare * lowerprice
+        # 計算機器人裡面有多少資產(可用現金+股票現值)
+        capitalInBot = self.money + uppershare * upperprice + lowershare * lowerprice
 
         # 計算目標部位(股數)
         uppershareTarget = int(shareTarget * capitalInBot / upperprice)
@@ -312,94 +289,35 @@ class GridBot:
         )
 
     def sendOrders(self):
-        # 計算要掛多少股
-        quantityUpper = self.uppershareTarget - self.uppershare
-        quantityLower = self.lowershareTarget - self.lowershare
-        quantityUpper = min(quantityUpper, 999)
-        quantityUpper = max(quantityUpper, -999)
-        quantityLower = min(quantityLower, 999)
-        quantityLower = max(quantityLower, -999)
-        # 確保掛單的量不會把交割款用完
-        code = self.upperid
-        money = self.money
-        if quantityUpper > 0:  # buy
-            cost = self.stockBid[code] * quantityUpper
-            if money < cost:
-                quantityUpper = max(int(money / self.stockBid[code]), 0)
+        quantityUpper = max(min(self.uppershareTarget - self.uppershare, 999), -999)
+        quantityLower = max(min(self.lowershareTarget - self.lowershare, 999), -999)
 
-        # quantityUpperValid = abs(quantityUpper) > 0
-        # 這邊做掛單,前面做了掛單量==0股的特殊檢查
-        if quantityUpper != 0:
-            # 在交易金額大於trigger(NT$2000)的時候掛單, coz of commision cost.
-            if abs(quantityUpper) * self.stockPrice[code] >= self.trigger:
-                cost = self.stockBid[code] * quantityUpper
-                contract = self.api.Contracts.Stocks[code]
-                # 掛買單的話,要把交割款扣掉買單的金額
-                # 避免後面掛分母的單的時候交割款不夠
-                if quantityUpper > 0:
-                    if money > cost:
-                        money = money - cost  # local money int
-                        self.logging.info(f"left money: {money}")
+        # available tracks cash across both legs THIS cycle only - fills are
+        # async (order_cb), so self.money won't reflect the upper leg's cost
+        # in time for the lower leg's check without this.
+        available = self._sendOneOrder(self.upperid, quantityUpper, self.money)
+        if self.lowerid != "Cash":
+            self._sendOneOrder(self.lowerid, quantityLower, available)
 
-                        order = self.createOrdObj(
-                            symbol=self.upperid,
-                            direction=sj.Action.Buy,
-                            qty=quantityUpper,
-                        )
-                        trade = self.api.place_order(contract, order)
-                        self.logging.info(f"BUY {code} @ {order.price}, qty: {order.quantity}")
-                else:
-                    order = self.createOrdObj(
-                        symbol=self.upperid,
-                        direction=sj.Action.Sell,
-                        qty=abs(quantityUpper),
-                    )
-                    trade = self.api.place_order(contract, order)
-                    self.logging.info(f"SELL {code} @ {order.price}, qty: {order.quantity}")
+    def _sendOneOrder(self, code, qty, available):
+        price = self.stockBid[code]
+        if qty > 0 and available < price * qty:
+            qty = max(int(available / price), 0)
+        if qty == 0 or abs(qty) * self.stockPrice[code] < self.trigger:
+            return available
 
-        # 這邊開始掛分母的單
-        # 首先確保掛單的量不會把交割款用完
-        code = self.lowerid
-        if quantityLower > 0:
-            cost = self.stockBid[code] * quantityLower
-            if money < cost:
-                quantityLower = max(int(money / self.stockBid[code]), 0)
+        cost = price * qty
+        if qty > 0 and available <= cost:
+            return available
 
-        # quantityLowerValid = abs(quantityLower) > 0
-        # 這邊做掛單,前面做了掛單量==0股的特殊檢查
-        if self.lowerid != "Cash" and quantityLower != 0:
-            # 在交易金額大於trigger的時候掛單
-            if abs(quantityLower) * self.stockPrice[code] >= self.trigger:
-                contract = self.api.Contracts.Stocks[code]
-                cost = self.stockBid[code] * quantityLower
-                direction = "Buy" if quantityLower > 0 else "Sell"
-                order = self.createOrdObj(
-                    symbol=self.lowerid,
-                    direction=direction,
-                    qty=abs(quantityLower),
-                )
+        direction = "Buy" if qty > 0 else "Sell"
+        contract = self.api.Contracts.Stocks[code]
+        order = self.createOrdObj(symbol=code, direction=direction, qty=abs(qty))
+        self.api.place_order(contract, order)
+        self.logging.info(f"{direction} {code} @ {order.price}, qty: {order.quantity}")
 
-                trade = self.api.place_order(contract, order)
-                self.logging.info(f"{direction} {code} @ {order.price}, qty: {order.quantity}")
+        if qty > 0:
+            available -= cost
+        return available
 
-                # if quantityLower > 0:
-                #     order = self.createOrdObj(
-                #         symbol=self.lowerid,
-                #         direction=shioaji.constant.Action.Buy,
-                #         qty=quantityLower,
-                #     )
-
-                #     trade = self.api.place_order(contract, order)
-                #     s = str(datetime.datetime.now())
-                #     s = f"{s} buy {contract}@ {order.price}, qty: {order.quantity}"
-                #     self.logging.info(s)
-                # else:
-                #     order = self.createOrdObj(
-                #         symbol=self.lowerid,
-                #         direction=shioaji.constant.Action.Sell,
-                #         qty=abs(quantityLower),
-                #     )
-                #     trade = self.api.place_order(contract, order)
-                #     s = str(datetime.datetime.now())
-                #     s = f"{s} sell {contract}@ {order.price}, qty: {order.quantity}"
-                #     self.logging.info(s)
+            
