@@ -172,7 +172,13 @@ def GridbotBody(api):
                 log_daily_pnl()
                 misc.write_json("money.json", bot1.money)
                 break
-            # if premarket is True, orders can be place out of mkt hrs.
+            # Two unrelated guards share this one flag:
+            # - hour<9 = premarket gate (pre-open call auction, before 9:00)
+            # - hour>13 = NOT premarket-related; hour 14/15 already broke out
+            #   above, so this only fires for hour>=16 - a safety net for
+            #   off-schedule runs (e.g. manual trigger at the wrong hour, or
+            #   TZ misconfig) that never hit the normal 14-15 exit, so it
+            #   doesn't blind-trade on stale prices late at night.
             if (not ENABLE_PREMARKET):
                 if (hour < 9 or (hour > 13)):
                     continue
