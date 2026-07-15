@@ -59,7 +59,8 @@ def GridbotBody(api):
 
     try:
         bot1.initmoney = misc.read_json('money.json')
-    except:
+    except Exception as e:
+        logging.error(f"read_json failed, defaulting initmoney to 0: {e}")
         bot1.initmoney = 0
     # bot1.live_cash_right_now starts at 0 in GridBot.__init__ and is otherwise only set
     # inside order_cb on a fill; without this line, sendOrders sees no cash
@@ -172,8 +173,11 @@ def GridbotBody(api):
             # it is allowed to place next-day orders after 3pm.
             if (hour >= 14 and hour <= 15):
                 log_daily_pnl()
-                # live available cash after execution 
-                misc.write_json("money.json", bot1.live_cash_right_now)
+                # live available cash after execution
+                try:
+                    misc.write_json("money.json", bot1.live_cash_right_now)
+                except Exception as e:
+                    logging.error(f"write_json failed at normal exit: {e}")
                 break
             # Two unrelated guards share this one flag:
             # - hour<9 = premarket gate (pre-open call auction, before 9:00)
@@ -218,9 +222,15 @@ def GridbotBody(api):
 
     except KeyboardInterrupt:
         print("\n my Ctrl-C detected. Exiting gracefully...")
-        bot1.cancelOrders()
+        try:
+            bot1.cancelOrders()
+        except Exception as e:
+            logging.error(f"cancelOrders failed on KeyboardInterrupt: {e}")
         log_daily_pnl()
-        misc.write_json("money.json", bot1.live_cash_right_now)
+        try:
+            misc.write_json("money.json", bot1.live_cash_right_now)
+        except Exception as e:
+            logging.error(f"write_json failed on KeyboardInterrupt: {e}")
         try:
             api.logout()
         except Exception as e:

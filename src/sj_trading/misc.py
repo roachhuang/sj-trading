@@ -1,12 +1,13 @@
 from datetime import date, datetime, timedelta
 import json
+import logging
 
 def write_json(filename, obj):
     try:
         with open(filename, "w") as handle:
             json.dump(obj, handle)
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logging.error(f"write_json failed for {filename}: {e}")
 
 def read_json(filename):
     """Reads capital record from a JSON file.
