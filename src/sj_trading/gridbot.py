@@ -6,6 +6,7 @@ from typing import Dict, Optional
 from shioaji import OrderState, OrderStatus
 from threading import Lock
 import datetime
+import math
 
 g_upperid = "0052"
 g_lowerid = "00662"
@@ -15,6 +16,12 @@ class GridBot:
     g_settlement: int
     upperid: str
     lowerid: str
+    # 台灣證券交易法定費率
+    FEE_RATE = 0.001425
+    FEE_DISCOUNT = 0.38
+    TAX_RATE_STOCK = 0.003    # 一般股票證交稅
+    TAX_RATE_ETF = 0.001      # ETF 證交稅
+    MIN_FEE = 1               # odd lot 手續費最低限制
 
     # parameters = {
     #     "BiasUpperLimit": 2.0,
@@ -65,15 +72,19 @@ class GridBot:
             isUpper = code == g_upperid
             isLower = code == g_lowerid
             if isUpper or isLower:
-                # global g_settlement
-                action = msg["action"]
-                price = msg["price"]
-                qty = msg["quantity"]
                 self.mutexgSettle.acquire()
+                
+                action = msg["action"]
+                price= msg["price"]
+                qty = msg["quantity"]
+                consideration = price * qty
+                commission = max(self.MIN_FEE, math.floor(consideration*self.FEE_RATE * self.FEE_DISCOUNT))
+               
                 if action == "Buy":
-                    self.g_settlement -= price * qty
+                    self.g_settlement -=  consideration + commission
                 elif action == "Sell":
-                    self.g_settlement += price * qty
+                    tax = math.floor(consideration*self.TAX_RATE_ETF)
+                    self.g_settlement += consideration - tax - commission
                 else:
                     pass
                 self.live_cash_right_now = int(self.initmoney + self.g_settlement)
@@ -101,29 +112,32 @@ class GridBot:
         now = datetime.datetime.now()
         # 如果有換日就更新均線,或者第一次呼叫的時候也會更新均線
         if now.year != self.year or now.month != self.month or now.day != self.day:
-            # 從Yfinance抓取日資料
-            upper = yf.Ticker(self.upperid + ".tw")
-            upper_hist = upper.history(period="2y")
+            try:
+                # 從Yfinance抓取日資料
+                upper = yf.Ticker(self.upperid + ".tw")
+                upper_hist = upper.history(period="2y")
 
-            # 計算均線
-            period = self.parameters["BiasPeriod"]
-            upper_close = upper_hist["Close"]
-            # 1.如果是做 股票 / TWD 的網格那就只要股票價格取平均
-            # 2.如果是做 股票A / 股票B 的相對價值網格那就需要
-            # 先計算 股票A / 股票B 的收盤價，再取平均
-            if self.lowerid != "Cash":
-                lower = yf.Ticker(self.lowerid + ".tw")
-                lower_hist = lower.history(period="2y")
-                lower_close = lower_hist["Close"]
-                close = (upper_close / lower_close).dropna()
-            else:
-                close = upper_close.dropna()
-            self.MA = close[-period:].mean()
-            self.year = now.year
-            self.month = now.month
-            self.day = now.day
-            s = "MA:" + str(self.MA)
-            # self.logging.info(s)
+                # 計算均線
+                period = self.parameters["BiasPeriod"]
+                upper_close = upper_hist["Close"]
+                # 1.如果是做 股票 / TWD 的網格那就只要股票價格取平均
+                # 2.如果是做 股票A / 股票B 的相對價值網格那就需要
+                # 先計算 股票A / 股票B 的收盤價，再取平均
+                if self.lowerid != "Cash":
+                    lower = yf.Ticker(self.lowerid + ".tw")
+                    lower_hist = lower.history(period="2y")
+                    lower_close = lower_hist["Close"]
+                    close = (upper_close / lower_close).dropna()
+                else:
+                    close = upper_close.dropna()
+                self.MA = close[-period:].mean()
+                self.year = now.year
+                self.month = now.month
+                self.day = now.day
+                s = "MA:" + str(self.MA)
+                # self.logging.info(s)
+            except Exception as e:
+                self.logging.error(f"UpdateMA failed, keeping stale MA: {e}")
 
     #########################################
     # 7.2 抓取庫存部位大小y
@@ -141,7 +155,7 @@ class GridBot:
 
     def calculateSharetarget(self, upperprice, lowerprice):
         # 計算目標部位百分比
-        shareTarget = self.calculateGrid(upperprice, lowerprice)
+        upper_alloc_percentage = self.calculateGrid(upperprice, lowerprice)
 
         # move to order_cb
         # self.live_cash_right_now=self.initmoney+self.g_settlement
@@ -154,8 +168,8 @@ class GridBot:
         capitalInBot = self.live_cash_right_now + uppershare * upperprice + lowershare * lowerprice
 
         # 計算目標部位(股數)
-        uppershareTarget = int(shareTarget * capitalInBot / upperprice)
-        lowershareTarget = int((1.0 - shareTarget) * capitalInBot / lowerprice)
+        uppershareTarget = int(upper_alloc_percentage * capitalInBot / upperprice)
+        lowershareTarget = int((1.0 - upper_alloc_percentage) * capitalInBot / lowerprice)
 
         # 紀錄目標部位(股數)
         self.uppershareTarget = uppershareTarget
@@ -163,10 +177,8 @@ class GridBot:
         # self.upperprice=upperprice
         # self.lowerprice=lowerprice
 
-        self.logging.info("uppershareTarget:" + str(uppershareTarget))
-        self.logging.info("lowershareTarget:" + str(lowershareTarget))
-        self.logging.info("upperprice:" + str(upperprice))
-        self.logging.info("lowerprice:" + str(lowerprice))
+        self.logging.info(f'uppershareTarget: {uppershareTarget}, pirce:{upperprice}')
+        self.logging.info(f'lowershareTarget: {lowershareTarget}, price:{lowerprice}')
 
     def calculateGrid(self, upperprice, lowerprice):
         """
@@ -191,12 +203,14 @@ class GridBot:
         當乖離率由負轉正，且股價突破移動平均線時，可能是一個買入訊號。
         """
         MA = self.MA
+        if not MA or math.isnan(MA):
+            self.logging.error("calculateGrid: MA is 0/NaN, falling back to no-op shareTarget")
+            return self.parameters["LowerLimitPosition"]
         # 計算目標部位百分比
         BiasUpperLimit = self.parameters["BiasUpperLimit"]
         UpperLimitPosition = self.parameters["UpperLimitPosition"]
         BiasLowerLimit = self.parameters["BiasLowerLimit"]
         LowerLimitPosition = self.parameters["LowerLimitPosition"]
-        BiasPeriod = self.parameters["BiasPeriod"]
         # compute 乖離 rate
         Bias = (upperprice / lowerprice) / MA
         shareTarget = (Bias - BiasLowerLimit) / (BiasUpperLimit - BiasLowerLimit)
@@ -204,6 +218,7 @@ class GridBot:
         shareTarget = max(shareTarget, UpperLimitPosition)
         shareTarget = min(shareTarget, LowerLimitPosition)
         # print("0052 shareTaget:", shareTarget)
+        # upper(0052) alloc percentage
         return shareTarget
 
     #########################################
@@ -259,10 +274,10 @@ class GridBot:
             cond1 = not (isCancelled or isFailed or isFilled)
             cond2 = thistrade.contract.code == self.upperid
             cond3 = thistrade.contract.code == self.lowerid
-            cond4 = self.lowerid != "Cash"
+          
             if cond1 and cond2:
                 tradeUpper.append(thistrade)
-            if cond1 and cond3 and cond4:
+            if cond1 and cond3:
                 tradeLower.append(thistrade)
 
         # 實際取消訂單的部分
@@ -270,7 +285,7 @@ class GridBot:
             try:
                 self.api.cancel_order(trade=tradeUpper[i])
                 self.api.update_status(self.api.stock_account)
-                s = f"{tradeUpper[i].status.status}/{tradeUpper[i].status.cancel_quantity}"
+                # s = f"{tradeUpper[i].status.status}/{tradeUpper[i].status.cancel_quantity}"
                 # self.logging.info(s)
             except Exception as e:
                 self.logging.error(f"cancel_order failed for upper trade {i}: {e}")
@@ -279,7 +294,7 @@ class GridBot:
             try:
                 self.api.cancel_order(trade=tradeLower[i])
                 self.api.update_status(self.api.stock_account)
-                s = f"{tradeLower[i].status.status}/{tradeLower[i].status.cancel_quantity}"
+                # s = f"{tradeLower[i].status.status}/{tradeLower[i].status.cancel_quantity}"
                 # self.logging.info(s)
             except Exception as e:
                 self.logging.error(f"cancel_order failed for lower trade {i}: {e}")

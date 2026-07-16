@@ -85,6 +85,7 @@ def GridbotBody(api):
             f"daily P&L: start_capital={totalcapital:.2f}, end_capital={end_capital:.2f}, "
             f"pnl={pnl:.2f} ({pnl_pct:.2f}%)"
         )
+        
     logging.info("starting cash for today's run: {:.2f}".format(bot1.initmoney))
     logging.info("uppershare value: {:.2f}".format(stockPrice[g_upperid]*bot1.uppershare))
     logging.info("lowershare value: {:.2f}".format(stockPrice[g_lowerid]*bot1.lowershare))
