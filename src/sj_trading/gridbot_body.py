@@ -161,18 +161,12 @@ def GridbotBody(api):
             if (hour == 13 and minute > 20):
                 try:
                     bot1.cancelOrders()
-                except Exception as e:
-                    logging.error('jobs_per1min  Error Message A: ' + str(e))
-                continue
-            # it is allowed to place next-day orders after 3pm.
-            if (hour >= 14 and hour <= 15):
-                log_daily_pnl()
-                # live available cash after execution
-                try:
+                    log_daily_pnl()
                     misc.write_json("money.json", bot1.live_cash_right_now)
                 except Exception as e:
-                    logging.error(f"write_json failed at normal exit: {e}")
+                    logging.error('jobs_per1min  Error Message A: ' + str(e))
                 break
+                
             # Two unrelated guards share this one flag:
             # - hour<9 = premarket gate (pre-open call auction, before 9:00)
             # - hour>13 = NOT premarket-related; hour 14/15 already broke out

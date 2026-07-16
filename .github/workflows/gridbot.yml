@@ -8,7 +8,7 @@ on:
     # exact-hour slots under high load.
     # GitHub cron can't skip Taiwan market holidays, so this still fires
     # on non-trading days; the run will just fail/no-op against the API.
-    - cron: '17 22 * * 0-4'
+    - cron: '31 00 * * 1-5'
   workflow_dispatch:
     inputs:
       seed_money:
