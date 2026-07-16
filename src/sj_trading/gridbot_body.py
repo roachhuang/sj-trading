@@ -20,24 +20,19 @@ load_dotenv()
 
 g_upperid = '0052'
 g_lowerid = '00662'
+TICKERS = (g_upperid, g_lowerid)
 ENABLE_PREMARKET = False
 ans = ''
 
 def GridbotBody(api):
     # gridBody runs from here
     # 成交價
-    snaprice = {}
-    snaprice[g_upperid] = api.snapshots([api.Contracts.Stocks[g_upperid]])
-    snaprice[g_lowerid] = api.snapshots([api.Contracts.Stocks[g_lowerid]])
-    stockPrice = {g_upperid: snaprice[g_upperid][0]['close'],
-                  g_lowerid: snaprice[g_lowerid][0]['close']}
-
+    snaprice = {tid: api.snapshots([api.Contracts.Stocks[tid]]) for tid in TICKERS}
+    stockPrice = {tid: snaprice[tid][0]['close'] for tid in TICKERS}
     # 最高買價
-    stockBid = {g_upperid: snaprice[g_upperid][0]['close'],
-                g_lowerid: snaprice[g_lowerid][0]['close']}
+    stockBid = {tid: snaprice[tid][0]['close'] for tid in TICKERS}
     # 最低賣價
-    stockAsk = {g_upperid: snaprice[g_upperid][0]['close'],
-                g_lowerid: snaprice[g_lowerid][0]['close']}
+    stockAsk = {tid: snaprice[tid][0]['close'] for tid in TICKERS}
     # # 最高買價
     # stockBid = {g_upperid: snaprice[g_upperid][0]['buy_price'],
     #             g_lowerid: snaprice[g_lowerid][0]['buy_price']}
@@ -110,12 +105,10 @@ def GridbotBody(api):
     # 告訴系統要訂閱
     # 1.ticks資料(用來看成交價)
     # 2.買賣價資料
-    contract_Upper = api.Contracts.Stocks[g_upperid]
-    contract_Lower = api.Contracts.Stocks[g_lowerid]
-    api.subscribe(contract_Lower, quote_type=sj.QuoteType.Tick, version=sj.QuoteVersion.v1)
-    api.subscribe(contract_Upper, quote_type=sj.QuoteType.Tick, version=sj.QuoteVersion.v1)
-    api.subscribe(contract_Lower, quote_type=sj.QuoteType.BidAsk, version=sj.QuoteVersion.v1)
-    api.subscribe(contract_Upper, quote_type=sj.QuoteType.BidAsk, version=sj.QuoteVersion.v1)
+    contracts = {tid: api.Contracts.Stocks[tid] for tid in TICKERS}
+    for tid in TICKERS:
+        api.subscribe(contracts[tid], quote_type=sj.QuoteType.Tick, version=sj.QuoteVersion.v1)
+        api.subscribe(contracts[tid], quote_type=sj.QuoteType.BidAsk, version=sj.QuoteVersion.v1)
     
     @api.on_tick_stk_v1()
     def STKtick_callback(exchange: Exchange, tick: TickSTKv1):
@@ -192,31 +185,24 @@ def GridbotBody(api):
                     continue
 
             # 處理成交價不在買賣價中間的狀況
-            # Acquires the lock associated with the resource identified by g_upperid in the mutexDict dictionary.
-            # This lock is used to synchronize access to some shared resource related to g_upperid.
-            mutexDict[g_upperid].acquire()
-            mutexDict[g_lowerid].acquire()
-            mutexBidAskDict[g_upperid].acquire()
-            mutexBidAskDict[g_lowerid].acquire()
+            # Acquires the locks associated with each ticker in mutexDict/mutexBidAskDict,
+            # used to synchronize access to stockPrice/stockBid/stockAsk across threads.
+            for tid in TICKERS:
+                mutexDict[tid].acquire()
+                mutexBidAskDict[tid].acquire()
 
-            if (stockPrice[g_upperid] > stockAsk[g_upperid] or stockPrice[g_upperid] < stockBid[g_upperid]):
-                stockPrice[g_upperid] = (
-                    stockAsk[g_upperid]+stockBid[g_upperid])/2
-            if (stockPrice[g_lowerid] > stockAsk[g_lowerid] or stockPrice[g_lowerid] < stockBid[g_lowerid]):
-                stockPrice[g_lowerid] = (
-                    stockAsk[g_lowerid]+stockBid[g_lowerid])/2
+            for tid in TICKERS:
+                if stockPrice[tid] > stockAsk[tid] or stockPrice[tid] < stockBid[tid]:
+                    stockPrice[tid] = (stockAsk[tid] + stockBid[tid]) / 2
 
             # save prices to gridbot
-            bot1.stockPrice[g_upperid] = stockPrice[g_upperid]
-            bot1.stockPrice[g_lowerid] = stockPrice[g_lowerid]
-            bot1.stockBid[g_upperid] = stockBid[g_upperid]
-            bot1.stockBid[g_lowerid] = stockBid[g_lowerid]
-            bot1.stockAsk[g_upperid] = stockAsk[g_upperid]
-            bot1.stockAsk[g_lowerid] = stockAsk[g_lowerid]
-            mutexDict[g_lowerid].release()
-            mutexDict[g_upperid].release()
-            mutexBidAskDict[g_lowerid].release()
-            mutexBidAskDict[g_upperid].release()
+            for tid in TICKERS:
+                bot1.stockPrice[tid] = stockPrice[tid]
+                bot1.stockBid[tid] = stockBid[tid]
+                bot1.stockAsk[tid] = stockAsk[tid]
+            for tid in TICKERS:
+                mutexDict[tid].release()
+                mutexBidAskDict[tid].release()
             
             # 更新買賣單, we can place order anytime before 2pm
             bot1.updateOrder()

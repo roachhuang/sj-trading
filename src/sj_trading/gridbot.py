@@ -153,7 +153,7 @@ class GridBot:
         # msg = f"positions: 00662-{self.lowershare}, 0052-{self.uppershare}"
         # print(msg)
 
-    def calculateSharetarget(self, upperprice, lowerprice):
+    def calculateSharetarget(self, upperprice, lowerprice)->tuple:
         # 計算目標部位百分比
         upper_alloc_percentage = self.calculateGrid(upperprice, lowerprice)
 
@@ -172,15 +172,22 @@ class GridBot:
         lowershareTarget = int((1.0 - upper_alloc_percentage) * capitalInBot / lowerprice)
 
         # 紀錄目標部位(股數)
-        self.uppershareTarget = uppershareTarget
-        self.lowershareTarget = lowershareTarget
+        # self.uppershareTarget = uppershareTarget
+        # self.lowershareTarget = lowershareTarget
         # self.upperprice=upperprice
         # self.lowerprice=lowerprice
 
         self.logging.info(f'uppershareTarget: {uppershareTarget}, pirce:{upperprice}')
         self.logging.info(f'lowershareTarget: {lowershareTarget}, price:{lowerprice}')
+        # 2. 直接計算出目標股數的 Tuple： (upper_target, lower_target)
+        # 注意：若您前面有處理摩擦成本低消考慮，這裡使用 int() 會直接向零取整（無條件捨去）
+        targets = (
+            int(upper_alloc_percentage * capitalInBot / upperprice),
+            int((1.0 - upper_alloc_percentage) * capitalInBot / lowerprice)
+        )
+        return targets
 
-    def calculateGrid(self, upperprice, lowerprice):
+    def calculateGrid(self, upperprice, lowerprice)->float:
         """
         乖離率是一個用來衡量股價與其移動平均線之間差距的指標。簡單來說，就是用來觀察股價是偏離了長期趨勢多還是少。
 
@@ -217,35 +224,37 @@ class GridBot:
         shareTarget = shareTarget * (UpperLimitPosition - LowerLimitPosition) + LowerLimitPosition
         shareTarget = max(shareTarget, UpperLimitPosition)
         shareTarget = min(shareTarget, LowerLimitPosition)
-        # print("0052 shareTaget:", shareTarget)
-        # upper(0052) alloc percentage
-        return shareTarget
+        upper_alloc_percentage = shareTarget
+        return upper_alloc_percentage
 
     #########################################
     # 7.3. 實際掛單
     ###########################################
 
     def updateOrder(self):
-        #################################
-        # 0.更新日均線資料
-        #################################
-        self.UpdateMA()
-       
-        self.cancelOrders()
-        #################################
-        # 2.更新庫存
-        ############################
-        self.getPositions()
-        ####################################
-        # 3.更新目標部位
-        ##############################
-        # it looks like current price
-        self.calculateSharetarget(
-            upperprice=self.stockPrice[g_upperid],
-            lowerprice=self.stockPrice[g_lowerid],
-        )
-      
-        self.sendOrders()
+        try:
+            #################################
+            # 0.更新日均線資料
+            #################################
+            self.UpdateMA()
+
+            self.cancelOrders()
+            #################################
+            # 2.更新庫存
+            ############################
+            self.getPositions()
+            ####################################
+            # 3.更新目標部位
+            ##############################
+            # it looks like current price
+            target_share = self.calculateSharetarget(
+                upperprice=self.stockPrice[g_upperid],
+                lowerprice=self.stockPrice[g_lowerid],
+            )
+
+            self.sendOrders(target_share)
+        except Exception as e:
+            self.logging.error(f"updateOrder failed, skipping this cycle: {e}")
 
     def cancelOrders(self):
         try:
@@ -255,49 +264,21 @@ class GridBot:
         except Exception as e:
             self.logging.error(f"list_trades failed, skipping cancel this cycle: {e}")
             return
-        tradeUpper = []
-        tradeLower = []
-        for i in range(0, len(tradelist), 1):
-            thistrade = tradelist[i]
-            thisstatus = thistrade.status.status
-            # 單子的狀態太多種,先列出來
-            isCancelled = thisstatus == OrderStatus.Cancelled
-            isFailed = thisstatus == OrderStatus.Failed
-            isFilled = thisstatus == OrderStatus.Filled
-            isInactive = thisstatus == OrderStatus.Inactive
-            isPartFilled = thisstatus == OrderStatus.PartFilled
-            isPendingSubmit = thisstatus == OrderStatus.PendingSubmit
-            isPreSubmitted = thisstatus == OrderStatus.PreSubmitted
-            isSubmitted = thisstatus == OrderStatus.Submitted
-
-            # 把交易股票種類跟交易機器人一樣的有效訂單取消
-            cond1 = not (isCancelled or isFailed or isFilled)
-            cond2 = thistrade.contract.code == self.upperid
-            cond3 = thistrade.contract.code == self.lowerid
-          
-            if cond1 and cond2:
-                tradeUpper.append(thistrade)
-            if cond1 and cond3:
-                tradeLower.append(thistrade)
+        # 把交易股票種類跟交易機器人一樣的有效訂單取消
+        terminal_statuses = (OrderStatus.Cancelled, OrderStatus.Failed, OrderStatus.Filled)
+        trades_by_id = {self.upperid: [], self.lowerid: []}
+        for thistrade in tradelist:
+            if thistrade.status.status not in terminal_statuses and thistrade.contract.code in trades_by_id:
+                trades_by_id[thistrade.contract.code].append(thistrade)
 
         # 實際取消訂單的部分
-        for i in range(0, len(tradeUpper), 1):
-            try:
-                self.api.cancel_order(trade=tradeUpper[i])
-                self.api.update_status(self.api.stock_account)
-                # s = f"{tradeUpper[i].status.status}/{tradeUpper[i].status.cancel_quantity}"
-                # self.logging.info(s)
-            except Exception as e:
-                self.logging.error(f"cancel_order failed for upper trade {i}: {e}")
-        
-        for i in range(0, len(tradeLower), 1):
-            try:
-                self.api.cancel_order(trade=tradeLower[i])
-                self.api.update_status(self.api.stock_account)
-                # s = f"{tradeLower[i].status.status}/{tradeLower[i].status.cancel_quantity}"
-                # self.logging.info(s)
-            except Exception as e:
-                self.logging.error(f"cancel_order failed for lower trade {i}: {e}")
+        for tid, trades in trades_by_id.items():
+            for i, trade in enumerate(trades):
+                try:
+                    self.api.cancel_order(trade=trade)
+                    self.api.update_status(self.api.stock_account)
+                except Exception as e:
+                    self.logging.error(f"cancel_order failed for {tid} trade {i}: {e}")
 
     def createOrdObj(self, symbol, direction, qty):
         return sj.StockOrder(
@@ -310,9 +291,10 @@ class GridBot:
             account=self.api.stock_account,
         )
 
-    def sendOrders(self):
-        quantityUpper = max(min(self.uppershareTarget - self.uppershare, 999), -999)
-        quantityLower = max(min(self.lowershareTarget - self.lowershare, 999), -999)
+    def sendOrders(self, target_share:tuple):
+        target_upper_share, target_lower_share = target_share
+        quantityUpper = max(min(target_upper_share - self.uppershare, 999), -999)
+        quantityLower = max(min(target_lower_share - self.lowershare, 999), -999)
 
         # available tracks cash across both legs THIS cycle only - fills are
         # async (order_cb), so self.live_cash_right_now won't reflect the upper leg's cost
