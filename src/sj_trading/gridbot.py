@@ -76,7 +76,9 @@ class GridBot:
                 
                 action = msg["action"]
                 price= msg["price"]
-                qty = msg["quantity"]
+                # Shioaji reports Common-lot fills in lots (1 lot = 1000
+                # shares); IntradayOdd fills are already in raw shares.
+                qty = msg["quantity"] * 1000 if msg["order_lot"] == "Common" else msg["quantity"]
                 consideration = price * qty
                 commission = max(self.MIN_FEE, math.floor(consideration*self.FEE_RATE * self.FEE_DISCOUNT))
                
@@ -280,26 +282,33 @@ class GridBot:
                 except Exception as e:
                     self.logging.error(f"cancel_order failed for {tid} trade {i}: {e}")
 
-    def createOrdObj(self, symbol, direction, qty):
+    def createOrdObj(self, symbol, direction, qty, order_lot):
+        # Common expects quantity in lots (1 lot = 1000 shares); IntradayOdd
+        # expects raw shares. Caller passes whichever is correct per order_lot.
         return sj.StockOrder(
             price=self.stockBid[symbol],
             quantity=qty,
             action=direction,
             price_type=sj.StockPriceType.LMT,
             order_type=sj.OrderType.ROD,
-            order_lot=sj.StockOrderLot.IntradayOdd,
+            order_lot=order_lot,
             account=self.api.stock_account,
         )
 
     def sendOrders(self, target_share:tuple):
         target_upper_share, target_lower_share = target_share
-        quantityUpper = max(min(target_upper_share - self.uppershare, 999), -999)
-        quantityLower = max(min(target_lower_share - self.lowershare, 999), -999)
+        quantityUpper = target_upper_share - self.uppershare
+        quantityLower = target_lower_share - self.lowershare
 
         # available tracks cash across both legs THIS cycle only - fills are
         # async (order_cb), so self.live_cash_right_now won't reflect the upper leg's cost
         # in time for the lower leg's check without this.
-        available = self._sendOneOrder(self.upperid, quantityUpper, self.live_cash_right_now)
+        # Snapshot under mutexgSettle - order_cb writes live_cash_right_now
+        # under this same lock on its own thread, so an unprotected read
+        # here could race a concurrent fill and grab a stale value.
+        with self.mutexgSettle:
+            available = self.live_cash_right_now
+        available = self._sendOneOrder(self.upperid, quantityUpper, available)
         self._sendOneOrder(self.lowerid, quantityLower, available)
 
     def _sendOneOrder(self, code, qty, available):
@@ -310,22 +319,36 @@ class GridBot:
         if qty == 0 or abs(qty) * self.stockPrice[code] < self.trigger:
             return available
 
-        cost = price * qty
-        if qty > 0 and available <= cost:
+        if qty > 0 and available <= price * qty:
             return available
 
         direction = "Buy" if qty > 0 else "Sell"
         contract = self.api.Contracts.Stocks[code]
-        order = self.createOrdObj(symbol=code, direction=direction, qty=abs(qty))
-        try:
-            self.api.place_order(contract, order)
-        except Exception as e:
-            self.logging.error(f"place_order failed for {code} {direction} qty={abs(qty)}: {e}")
-            return available
-        # self.logging.info(f"{direction} {code} @ {order.price}, qty: {order.quantity}")
+        # A target delta can exceed 999 shares (e.g. 3950) - IntradayOdd
+        # orders only accept 0-999 shares, so anything >=1000 needs a
+        # separate Common-lot order (quantity in lots) for the round-lot
+        # portion plus an IntradayOdd order for the remainder.
+        lots, remainder = divmod(abs(qty), 1000)
+        # Only count shares from orders that actually got submitted, so a
+        # partial failure (e.g. the odd-lot leg rejected) doesn't debit
+        # available for shares that were never really bought.
+        successfully_ordered_shares = 0
+        for order_lot, lot_qty in ((sj.StockOrderLot.Common, lots), (sj.StockOrderLot.IntradayOdd, remainder)):
+            if lot_qty == 0:
+                continue
+            order = self.createOrdObj(symbol=code, direction=direction, qty=lot_qty, order_lot=order_lot)
+            try:
+                self.api.place_order(contract, order)
+            except Exception as e:
+                self.logging.error(f"place_order failed for {code} {direction} {order_lot} qty={lot_qty}: {e}")
+                continue
+            self.logging.info(f"{direction} {code} {order_lot} @ {order.price}, qty: {order.quantity}")
+            successfully_ordered_shares += lot_qty * 1000 if order_lot == sj.StockOrderLot.Common else lot_qty
 
+        # Sells never add to available (proceeds unsettled this cycle) -
+        # only buys reduce it, and only for the portion actually submitted.
         if qty > 0:
-            available -= cost
+            available -= price * successfully_ordered_shares
         return available
 
             
