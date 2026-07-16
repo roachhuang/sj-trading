@@ -72,26 +72,31 @@ class GridBot:
             isUpper = code == g_upperid
             isLower = code == g_lowerid
             if isUpper or isLower:
-                self.mutexgSettle.acquire()
-                
-                action = msg["action"]
-                price= msg["price"]
-                # Shioaji reports Common-lot fills in lots (1 lot = 1000
-                # shares); IntradayOdd fills are already in raw shares.
-                qty = msg["quantity"] * 1000 if msg["order_lot"] == "Common" else msg["quantity"]
-                consideration = price * qty
-                commission = max(self.MIN_FEE, math.floor(consideration*self.FEE_RATE * self.FEE_DISCOUNT))
-               
-                if action == "Buy":
-                    self.g_settlement -=  consideration + commission
-                elif action == "Sell":
-                    tax = math.floor(consideration*self.TAX_RATE_ETF)
-                    self.g_settlement += consideration - tax - commission
-                else:
-                    pass
-                self.live_cash_right_now = int(self.initmoney + self.g_settlement)
-                self.mutexgSettle.release()
-                self.logging.info(f"deal: {code} {action} {qty}@{price}, live available cash right now: {self.live_cash_right_now}")
+                try:
+                    action = msg["action"]
+                    price = msg["price"]
+                    # Shioaji reports Common-lot fills in lots (1 lot = 1000
+                    # shares); IntradayOdd fills are already in raw shares.
+                    qty = msg["quantity"] * 1000 if msg["order_lot"] == "Common" else msg["quantity"]
+                    consideration = price * qty
+                    commission = max(self.MIN_FEE, math.floor(consideration*self.FEE_RATE * self.FEE_DISCOUNT))
+
+                    # `with` guarantees release even if something below raises -
+                    # a raw acquire()/release() here previously meant any
+                    # exception (e.g. a missing dict key) would leak the lock
+                    # forever, deadlocking every future order_cb/sendOrders call.
+                    with self.mutexgSettle:
+                        if action == "Buy":
+                            self.g_settlement -= consideration + commission
+                        elif action == "Sell":
+                            tax = math.floor(consideration*self.TAX_RATE_ETF)
+                            self.g_settlement += consideration - tax - commission
+                        else:
+                            pass
+                        self.live_cash_right_now = int(self.initmoney + self.g_settlement)
+                    self.logging.info(f"deal: {code} {action} {qty}@{price}, live available cash right now: {self.live_cash_right_now}")
+                except Exception as e:
+                    self.logging.error(f"order_cb settlement update failed: {e}")
         self.mutexmsg.acquire()
         try:
             self.msglist.append(msg)
@@ -144,16 +149,17 @@ class GridBot:
     #########################################
     # 7.2 抓取庫存部位大小y
     #########################################
-    def getPositions(self):
+    def getPositions(self) -> bool:
         try:
             positions = self.api.list_positions(self.api.stock_account, unit=sj.Unit.Share)
         except Exception as e:
             self.logging.error(f"list_positions failed, keeping stale share counts: {e}")
-            return
+            return False
         self.lowershare = next((pos.quantity for pos in positions if pos.code == self.lowerid), 0)
         self.uppershare = next((pos.quantity for pos in positions if pos.code == self.upperid), 0)
         # msg = f"positions: 00662-{self.lowershare}, 0052-{self.uppershare}"
         # print(msg)
+        return True
 
     def calculateSharetarget(self, upperprice, lowerprice)->tuple:
         # 計算目標部位百分比
@@ -240,11 +246,15 @@ class GridBot:
             #################################
             self.UpdateMA()
 
-            self.cancelOrders()
+            if not self.cancelOrders():
+                self.logging.error("updateOrder: cancelOrders incomplete, skipping this cycle to avoid placing new orders on top of stale ones")
+                return
             #################################
             # 2.更新庫存
             ############################
-            self.getPositions()
+            if not self.getPositions():
+                self.logging.error("updateOrder: getPositions failed, skipping this cycle (stale share counts)")
+                return
             ####################################
             # 3.更新目標部位
             ##############################
@@ -258,14 +268,14 @@ class GridBot:
         except Exception as e:
             self.logging.error(f"updateOrder failed, skipping this cycle: {e}")
 
-    def cancelOrders(self):
+    def cancelOrders(self) -> bool:
         try:
             self.api.update_status(self.api.stock_account)
             # 列出所有的訂單
             tradelist = self.api.list_trades()
         except Exception as e:
             self.logging.error(f"list_trades failed, skipping cancel this cycle: {e}")
-            return
+            return False
         # 把交易股票種類跟交易機器人一樣的有效訂單取消
         terminal_statuses = (OrderStatus.Cancelled, OrderStatus.Failed, OrderStatus.Filled)
         trades_by_id = {self.upperid: [], self.lowerid: []}
@@ -274,6 +284,7 @@ class GridBot:
                 trades_by_id[thistrade.contract.code].append(thistrade)
 
         # 實際取消訂單的部分
+        all_cancelled = True
         for tid, trades in trades_by_id.items():
             for i, trade in enumerate(trades):
                 try:
@@ -281,6 +292,8 @@ class GridBot:
                     self.api.update_status(self.api.stock_account)
                 except Exception as e:
                     self.logging.error(f"cancel_order failed for {tid} trade {i}: {e}")
+                    all_cancelled = False
+        return all_cancelled
 
     def createOrdObj(self, symbol, direction, qty, order_lot):
         # Common expects quantity in lots (1 lot = 1000 shares); IntradayOdd
@@ -311,19 +324,22 @@ class GridBot:
         available = self._sendOneOrder(self.upperid, quantityUpper, available)
         self._sendOneOrder(self.lowerid, quantityLower, available)
 
-    def _sendOneOrder(self, code, qty, available):
-        price = self.stockBid[code]
+    def _sendOneOrder(self, symbol, qty, available):
+        price = self.stockBid[symbol]
+        if not price:
+            self.logging.error(f"_sendOneOrder: stockBid[{symbol}] is 0/missing, skipping this leg")
+            return available
         if qty > 0 and available < price * qty:
             qty = max(int(available / price), 0)
         # trigger=NT$2000 as a preventative of commision.
-        if qty == 0 or abs(qty) * self.stockPrice[code] < self.trigger:
+        if qty == 0 or abs(qty) * self.stockPrice[symbol] < self.trigger:
             return available
 
         if qty > 0 and available <= price * qty:
             return available
 
         direction = "Buy" if qty > 0 else "Sell"
-        contract = self.api.Contracts.Stocks[code]
+        contract = self.api.Contracts.Stocks[symbol]
         # A target delta can exceed 999 shares (e.g. 3950) - IntradayOdd
         # orders only accept 0-999 shares, so anything >=1000 needs a
         # separate Common-lot order (quantity in lots) for the round-lot
@@ -336,13 +352,19 @@ class GridBot:
         for order_lot, lot_qty in ((sj.StockOrderLot.Common, lots), (sj.StockOrderLot.IntradayOdd, remainder)):
             if lot_qty == 0:
                 continue
-            order = self.createOrdObj(symbol=code, direction=direction, qty=lot_qty, order_lot=order_lot)
+            order = self.createOrdObj(symbol=symbol, direction=direction, qty=lot_qty, order_lot=order_lot)
             try:
-                self.api.place_order(contract, order)
+                trade_result = self.api.place_order(contract, order)
             except Exception as e:
-                self.logging.error(f"place_order failed for {code} {direction} {order_lot} qty={lot_qty}: {e}")
+                self.logging.error(f"place_order failed for {symbol} {direction} {order_lot} qty={lot_qty}: {e}")
                 continue
-            self.logging.info(f"{direction} {code} {order_lot} @ {order.price}, qty: {order.quantity}")
+            # place_order() not raising only means the API call went through -
+            # a broker-side rejection (bad price, order restrictions) comes
+            # back as a normal Trade with status=Failed, no exception at all.
+            if trade_result.status.status == OrderStatus.Failed:
+                self.logging.error(f"place_order rejected by broker for {symbol} {direction} {order_lot} qty={lot_qty}: {trade_result.status.status}")
+                continue
+            self.logging.info(f"{direction} {symbol} {order_lot} @ {order.price}, qty: {order.quantity}")
             successfully_ordered_shares += lot_qty * 1000 if order_lot == sj.StockOrderLot.Common else lot_qty
 
         # Sells never add to available (proceeds unsettled this cycle) -
