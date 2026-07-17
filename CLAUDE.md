@@ -39,6 +39,7 @@ When I correct you, or you catch yourself making a mistake: before continuing, a
 - Before claiming a GitHub Actions config change "fixes" something, verify which specific token/mechanism actually governs that behavior rather than reasoning from generic docs — e.g. `actions/cache`/`actions/upload-artifact` authenticate via `ACTIONS_RUNTIME_TOKEN`, not `GITHUB_TOKEN`, so the repo's "Workflow permissions" setting doesn't affect them at all.
 - Before asserting two assets are well/poorly diversified based on category priors ("both are growth/tech, so they're correlated"), check actual historical correlation data - priors can be wrong and a backtest is cheap to run.
 - Before deleting or "cleaning up" any file/directory not created this session, check its git status, history, and lock state first (e.g. `git worktree list` showing `locked`) - don't act on "looks like leftover garbage" without verifying.
+- Before assuming an implausible price jump is bad data (e.g. exceeds TWSE's real +-10% daily limit), check the exchange's own official feed and search for a real corporate action before calling it a bug - 0052's ~7x "impossible" jump was a genuine, publicly-disclosed 1-for-7 split that yfinance simply failed to record/misdated, not fabricated data. The fix (detect and adjust for the discontinuity) was right either way, but the "not real price action" claim was wrong until verified against TWSE directly.
 
 ## Architecture
 

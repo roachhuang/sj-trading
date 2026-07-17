@@ -8,7 +8,7 @@ on:
     # exact-hour slots under high load.
     # GitHub cron can't skip Taiwan market holidays, so this still fires
     # on non-trading days; the run will just fail/no-op against the API.
-    - cron: '03 00 * * 1-5'
+    - cron: '23 23 * * 0-4'
   workflow_dispatch:
     inputs:
       seed_money:
@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     # GridbotBody runs from ~9:00 to ~14:00 Taiwan time; give it headroom
     # but keep a hard cap so a stuck run doesn't burn Actions minutes all day.
-    timeout-minutes: 330
+    timeout-minutes: 360
     env:
       SJ_PRODUCTION: "true"
       # gridbot_body.py gates its trading loop on datetime.now() wall-clock

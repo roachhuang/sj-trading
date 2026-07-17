@@ -26,9 +26,33 @@ BROKERAGE = 0.1425 / 100 * 0.6
 ETF_TAX = 0.1 / 100
 
 
+# TWSE's daily price move limit is +-10%; anything beyond this (with a
+# small buffer for rounding) cannot be real price action - only a data
+# defect (e.g. an unlabeled/missing split adjustment).
+DAILY_LIMIT_PCT = 0.12
+
+
+def _adjust_split_defects(close_series: pd.Series) -> pd.Series:
+    """Retroactively rescales everything before each implausible jump by
+    the jump ratio, so the whole series becomes one continuous scale -
+    unlike the live bot's truncate-and-drop approach, a full backtest needs
+    the history preserved rather than thrown away."""
+    s = close_series.copy()
+    while True:
+        pct_change = s.pct_change().abs()
+        bad = pct_change[pct_change > DAILY_LIMIT_PCT]
+        if bad.empty:
+            return s
+        pos = s.index.get_loc(bad.index[-1])
+        if pos == 0:
+            return s
+        ratio = s.iloc[pos] / s.iloc[pos - 1]
+        s.iloc[:pos] = s.iloc[:pos] * ratio
+
+
 def load_prices(period: str = "max") -> pd.DataFrame:
-    u = yf.Ticker(UPPER + ".tw").history(period=period)["Close"]
-    l = yf.Ticker(LOWER + ".tw").history(period=period)["Close"]
+    u = _adjust_split_defects(yf.Ticker(UPPER + ".tw").history(period=period)["Close"])
+    l = _adjust_split_defects(yf.Ticker(LOWER + ".tw").history(period=period)["Close"])
     df = pd.concat([u, l], axis=1, keys=["upper", "lower"]).dropna()
     df.index = df.index.tz_localize(None)
     return df

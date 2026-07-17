@@ -30,17 +30,19 @@ class GridBot:
     #     "LowerLimitPosition": 0.899999,
     #     "BiasPeriod": 6,
     # }
-    # Backtested 2016-2026 (~2455 trading days, out-of-sample validated on a
-    # held-out 2023-2026 slice): Sharpe 1.27 in-sample / 1.79 out-of-sample
-    # vs. 0.57 / 0.40 for the previous values, with a shallower max drawdown
-    # (-36% vs -59%). Position bounds kept away from 0/1 so this stays a
-    # genuine two-asset grid rather than a Nasdaq-timing on/off switch.
+    # Re-backtested 2016-2026 after fixing an unlabeled 1-for-7 split in
+    # 0052's yfinance data (2025-11, see backtest.py's _adjust_split_defects)
+    # that had corrupted the prior parameters' backtest: Sharpe 0.94
+    # in-sample / 1.99 out-of-sample vs. buy&hold's 1.30 on the same clean
+    # data - the previous params' apparent large edge over buy&hold was
+    # partly an artifact of that bad data. Position bounds kept away from
+    # 0/1 so this stays a genuine two-asset grid rather than an on/off switch.
     parameters = {
-        "BiasUpperLimit": 1.1,
-        "UpperLimitPosition": 0.15,
-        "BiasLowerLimit": 0.95,
-        "LowerLimitPosition": 0.85,
-        "BiasPeriod": 220,
+        "BiasUpperLimit": 1.4,
+        "UpperLimitPosition": 0.35,
+        "BiasLowerLimit": 0.70,
+        "LowerLimitPosition": 0.80,
+        "BiasPeriod": 180,
     }
 
     def __init__(self, api: sj.Shioaji, logging):
