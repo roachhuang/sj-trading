@@ -115,6 +115,21 @@ class GridBot:
     #########################################
     # 7.1 計算策略目標部位(百分比)
     ###########################################
+    # TWSE's daily price move limit is +-10%; anything beyond this (with a
+    # small buffer for rounding) cannot be real price action - only a data
+    # defect (e.g. an unlabeled/missing split adjustment). Mixing pre/post
+    # scales across such a jump corrupts any average computed over it.
+    DAILY_LIMIT_PCT = 0.12
+
+    def _truncate_at_bad_data(self, close_series):
+        pct_change = close_series.pct_change().abs()
+        bad = pct_change[pct_change > self.DAILY_LIMIT_PCT]
+        if bad.empty:
+            return close_series
+        last_bad_date = bad.index[-1]
+        self.logging.error(f"UpdateMA: implausible >{self.DAILY_LIMIT_PCT:.0%} single-day move detected at {last_bad_date}, truncating MA window to data after it")
+        return close_series[close_series.index > last_bad_date]
+
     def UpdateMA(self):
         now = datetime.datetime.now()
         # 如果有換日就更新均線,或者第一次呼叫的時候也會更新均線
@@ -126,14 +141,14 @@ class GridBot:
 
                 # 計算均線
                 period = self.parameters["BiasPeriod"]
-                upper_close = upper_hist["Close"]
+                upper_close = self._truncate_at_bad_data(upper_hist["Close"])
                 # 1.如果是做 股票 / TWD 的網格那就只要股票價格取平均
                 # 2.如果是做 股票A / 股票B 的相對價值網格那就需要
                 # 先計算 股票A / 股票B 的收盤價，再取平均
                 if self.lowerid != "Cash":
                     lower = yf.Ticker(self.lowerid + ".tw")
                     lower_hist = lower.history(period="2y")
-                    lower_close = lower_hist["Close"]
+                    lower_close = self._truncate_at_bad_data(lower_hist["Close"])
                     close = (upper_close / lower_close).dropna()
                 else:
                     close = upper_close.dropna()
