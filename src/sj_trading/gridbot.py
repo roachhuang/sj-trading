@@ -80,8 +80,9 @@ class GridBot:
                     # Shioaji reports Common-lot fills in lots (1 lot = 1000
                     # shares); IntradayOdd fills are already in raw shares.
                     qty = msg["quantity"] * 1000 if msg["order_lot"] == "Common" else msg["quantity"]
-                    consideration = price * qty
-                    commission = max(self.MIN_FEE, math.floor(consideration*self.FEE_RATE * self.FEE_DISCOUNT))
+                    principal = math.floor(price * qty)
+                    min_brokerage_fee = 20 if msg["order_lot"] == "Common" else 1
+                    commission = max(min_brokerage_fee, math.floor(principal*self.FEE_RATE * self.FEE_DISCOUNT))
 
                     # `with` guarantees release even if something below raises -
                     # a raw acquire()/release() here previously meant any
@@ -89,10 +90,10 @@ class GridBot:
                     # forever, deadlocking every future order_cb/sendOrders call.
                     with self.mutexgSettle:
                         if action == "Buy":
-                            self.g_settlement -= consideration + commission
+                            self.g_settlement -= principal + commission
                         elif action == "Sell":
-                            tax = math.floor(consideration*self.TAX_RATE_ETF)
-                            self.g_settlement += consideration - tax - commission
+                            tax = math.floor(principal*self.TAX_RATE_ETF)
+                            self.g_settlement += principal - tax - commission
                         else:
                             pass
                         self.live_cash_right_now = int(self.initmoney + self.g_settlement)
