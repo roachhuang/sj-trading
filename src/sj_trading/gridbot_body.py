@@ -63,24 +63,26 @@ def GridbotBody(api):
     # wiping the carried-over balance.
     # 昨天剩下的 cash =今天可用的 cash
     bot1.live_cash_right_now = bot1.initmoney
-    # capital @ this point in time, not necessary today's mkt open prices coz github's delaylaunch 
-    totalcapital = bot1.initmoney + \
-        stockPrice[g_upperid]*bot1.uppershare + \
-        stockPrice[g_lowerid]*bot1.lowershare
+    # reads bot1.uppershare/lowershare fresh on each call - they change as
+    # the bot trades through the day, so this must not be memoized.
+    def stock_value():
+        shares = {g_upperid: bot1.uppershare, g_lowerid: bot1.lowershare}
+        return sum(stockPrice[tid] * shares[tid] for tid in TICKERS)
+
+    # capital @ this point in time, not necessary today's mkt open prices coz github's delaylaunch
+    totalcapital = bot1.initmoney + stock_value()
     # 更新Trigger大小,在資產很多的時候固定2000會有點少
     bot1.trigger = max(2000, totalcapital*0.005)
 
     def log_daily_pnl():
-        end_capital = bot1.live_cash_right_now + \
-            stockPrice[g_upperid]*bot1.uppershare + \
-            stockPrice[g_lowerid]*bot1.lowershare
+        end_capital = bot1.live_cash_right_now + stock_value()
         pnl = end_capital - totalcapital
         pnl_pct = pnl / totalcapital * 100 if totalcapital else 0
         logging.info(
             f"daily P&L: start_capital={totalcapital:.2f}, end_capital={end_capital:.2f}, "
             f"pnl={pnl:.2f} ({pnl_pct:.2f}%)"
         )
-        
+
     logging.info("starting cash for today's run: {:.2f}".format(bot1.initmoney))
     logging.info("uppershare value: {:.2f}".format(stockPrice[g_upperid]*bot1.uppershare))
     logging.info("lowershare value: {:.2f}".format(stockPrice[g_lowerid]*bot1.lowershare))
