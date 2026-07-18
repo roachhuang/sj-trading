@@ -1,4 +1,3 @@
-# import pandas as pd
 import shioaji as sj
 import yfinance as yf
 
@@ -10,6 +9,7 @@ import math
 
 g_upperid = "0052"
 g_lowerid = "00662"
+TICKERS = (g_upperid, g_lowerid)
 
 
 class GridBot:
@@ -23,13 +23,6 @@ class GridBot:
     TAX_RATE_ETF = 0.001      # ETF 證交稅
     MIN_FEE = 1               # odd lot 手續費最低限制
 
-    # parameters = {
-    #     "BiasUpperLimit": 2.0,
-    #     "UpperLimitPosition": 0.4,
-    #     "BiasLowerLimit": 0.899999,
-    #     "LowerLimitPosition": 0.899999,
-    #     "BiasPeriod": 6,
-    # }
     # Re-backtested 2016-2026 after fixing an unlabeled 1-for-7 split in
     # 0052's yfinance data (2025-11, see backtest.py's _adjust_split_defects)
     # that had corrupted the prior parameters' backtest: Sharpe 0.94
@@ -49,21 +42,14 @@ class GridBot:
         # keep track of MA calulated date
         self.year = self.month = self.day = 0
         self.trigger = 2000  # 最低交易金額門檻,避免交易金額太小,錢被手續費低消吃光光
-        self.msglist = []
-        self.statlist = []
         self.stockPrice = self.stockBid = self.stockAsk = {}
         self.initmoney = self.g_settlement = 0
-        self.upperid = g_upperid
-        self.lowerid = g_lowerid
+        self.upperid, self.lowerid = TICKERS
         self.live_cash_right_now = self.upperprice = self.uppershare = self.lowerprice = self.lowershare = 0
-        self.contractUpper = api.Contracts.Stocks[self.upperid]
-        self.contractLower = api.Contracts.Stocks[self.lowerid]
         self.api = api
         self.logging = logging
         self.api.set_order_callback(self.order_cb)
         self.mutexgSettle = Lock()
-        self.mutexmsg = Lock()
-        self.mutexstat = Lock()
 
     # 處理訂單成交的狀況,用來更新交割款
     def order_cb(self, stat: OrderState, msg: Dict):
@@ -71,9 +57,7 @@ class GridBot:
         # OrderState.StockDeal is only a const, not an object. so as stat is also just a const
         if stat == OrderState.StockDeal:
             code = msg["code"]
-            isUpper = code == g_upperid
-            isLower = code == g_lowerid
-            if isUpper or isLower:
+            if code in TICKERS:
                 try:
                     action = msg["action"]
                     price = msg["price"]
@@ -100,20 +84,7 @@ class GridBot:
                     self.logging.info(f"deal: {code} {action} {qty}@{price}, live available cash right now: {self.live_cash_right_now}")
                 except Exception as e:
                     self.logging.error(f"order_cb settlement update failed: {e}")
-        self.mutexmsg.acquire()
-        try:
-            self.msglist.append(msg)
-        except Exception as e:  # work on python 3.x
-            self.logging.error("place_cb  Error Message A: " + str(e))
-        self.mutexmsg.release()
-
-        self.mutexstat.acquire()
-        try:
-            self.statlist.append(stat)
-            self.logging.info(f"in order_cb, stat: {stat}")
-        except Exception as e:  # work on python 3.x
-            self.logging.error("place_cb  Error Message B: " + str(e))
-        self.mutexstat.release()
+        self.logging.info(f"in order_cb, stat: {stat}")
 
     #########################################
     # 7.1 計算策略目標部位(百分比)
@@ -173,45 +144,24 @@ class GridBot:
         except Exception as e:
             self.logging.error(f"list_positions failed, keeping stale share counts: {e}")
             return False
-        self.lowershare = next((pos.quantity for pos in positions if pos.code == self.lowerid), 0)
-        self.uppershare = next((pos.quantity for pos in positions if pos.code == self.upperid), 0)
-        # msg = f"positions: 00662-{self.lowershare}, 0052-{self.uppershare}"
-        # print(msg)
+        shares = {tid: next((pos.quantity for pos in positions if pos.code == tid), 0) for tid in TICKERS}
+        self.uppershare, self.lowershare = shares[self.upperid], shares[self.lowerid]
         return True
 
-    def calculateSharetarget(self, upperprice, lowerprice)->tuple:
+    def calculateSharetarget(self, upperprice, lowerprice) -> tuple:
         # 計算目標部位百分比
         upper_alloc_percentage = self.calculateGrid(upperprice, lowerprice)
 
-        # move to order_cb
-        # self.live_cash_right_now=self.initmoney+self.g_settlement
-        # no reset settlement after update money is required coz of using initmoney
-
-        uppershare = self.uppershare
-        lowershare = self.lowershare
-
         # 計算機器人裡面有多少資產(可用現金+股票現值)
-        capitalInBot = self.live_cash_right_now + uppershare * upperprice + lowershare * lowerprice
+        capitalInBot = self.live_cash_right_now + self.uppershare * upperprice + self.lowershare * lowerprice
 
-        # 計算目標部位(股數)
+        # 計算目標部位(股數); int() 向零取整（無條件捨去）
         uppershareTarget = int(upper_alloc_percentage * capitalInBot / upperprice)
         lowershareTarget = int((1.0 - upper_alloc_percentage) * capitalInBot / lowerprice)
 
-        # 紀錄目標部位(股數)
-        # self.uppershareTarget = uppershareTarget
-        # self.lowershareTarget = lowershareTarget
-        # self.upperprice=upperprice
-        # self.lowerprice=lowerprice
-
         self.logging.info(f'uppershareTarget: {uppershareTarget}, pirce:{upperprice}')
         self.logging.info(f'lowershareTarget: {lowershareTarget}, price:{lowerprice}')
-        # 2. 直接計算出目標股數的 Tuple： (upper_target, lower_target)
-        # 注意：若您前面有處理摩擦成本低消考慮，這裡使用 int() 會直接向零取整（無條件捨去）
-        targets = (
-            int(upper_alloc_percentage * capitalInBot / upperprice),
-            int((1.0 - upper_alloc_percentage) * capitalInBot / lowerprice)
-        )
-        return targets
+        return uppershareTarget, lowershareTarget
 
     def calculateGrid(self, upperprice, lowerprice)->float:
         """
@@ -278,8 +228,8 @@ class GridBot:
             ##############################
             # it looks like current price
             target_share = self.calculateSharetarget(
-                upperprice=self.stockPrice[g_upperid],
-                lowerprice=self.stockPrice[g_lowerid],
+                upperprice=self.stockPrice[self.upperid],
+                lowerprice=self.stockPrice[self.lowerid],
             )
 
             self.sendOrders(target_share)
@@ -296,7 +246,7 @@ class GridBot:
             return False
         # 把交易股票種類跟交易機器人一樣的有效訂單取消
         terminal_statuses = (OrderStatus.Cancelled, OrderStatus.Failed, OrderStatus.Filled)
-        trades_by_id = {self.upperid: [], self.lowerid: []}
+        trades_by_id = {tid: [] for tid in TICKERS}
         for thistrade in tradelist:
             if thistrade.status.status not in terminal_statuses and thistrade.contract.code in trades_by_id:
                 trades_by_id[thistrade.contract.code].append(thistrade)
@@ -326,10 +276,9 @@ class GridBot:
             account=self.api.stock_account,
         )
 
-    def sendOrders(self, target_share:tuple):
-        target_upper_share, target_lower_share = target_share
-        quantityUpper = target_upper_share - self.uppershare
-        quantityLower = target_lower_share - self.lowershare
+    def sendOrders(self, target_share: tuple):
+        shares = {self.upperid: self.uppershare, self.lowerid: self.lowershare}
+        targets = dict(zip(TICKERS, target_share))
 
         # available tracks cash across both legs THIS cycle only - fills are
         # async (order_cb), so self.live_cash_right_now won't reflect the upper leg's cost
@@ -339,8 +288,8 @@ class GridBot:
         # here could race a concurrent fill and grab a stale value.
         with self.mutexgSettle:
             available = self.live_cash_right_now
-        available = self._sendOneOrder(self.upperid, quantityUpper, available)
-        self._sendOneOrder(self.lowerid, quantityLower, available)
+        for tid in TICKERS:
+            available = self._sendOneOrder(tid, targets[tid] - shares[tid], available)
 
     def _sendOneOrder(self, symbol, qty, available):
         price = self.stockBid[symbol]

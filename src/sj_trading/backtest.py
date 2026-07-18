@@ -17,7 +17,9 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from sj_trading.gridbot import g_upperid as UPPER, g_lowerid as LOWER
+from sj_trading.gridbot import TICKERS
+
+UPPER, LOWER = TICKERS
 
 # Realistic Taiwan retail costs: commonly-discounted brokerage (~40% off the
 # 0.1425% headline rate) each side, plus the 0.1% ETF transaction tax on

@@ -99,8 +99,8 @@ def GridbotBody(api):
     # 用來處理多線程的變數,在更新價格和訂單成交回報時會用到
     # It contains Lock objects associated with identifiers g_upperid and g_lowerid. These locks are used to synchronize
     # access to the dictionaries stockPrice, stockBid, and stockAsk, which are accessed concurrently by multiple threads.
-    mutexDict = {g_upperid: Lock(), g_lowerid: Lock()}
-    mutexBidAskDict = {g_upperid: Lock(), g_lowerid: Lock()}
+    mutexDict = {tid: Lock() for tid in TICKERS}
+    mutexBidAskDict = {tid: Lock() for tid in TICKERS}
 
     # 告訴系統要訂閱
     # 1.ticks資料(用來看成交價)
