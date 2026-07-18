@@ -11,6 +11,7 @@ this is an offline research tool for periodically re-checking whether the
 current `GridBot.parameters` are still reasonable.
 """
 import itertools
+import math
 import time
 
 import numpy as np
@@ -21,10 +22,11 @@ from sj_trading.gridbot import TICKERS
 
 UPPER, LOWER = TICKERS
 
-# Realistic Taiwan retail costs: commonly-discounted brokerage (~40% off the
-# 0.1425% headline rate) each side, plus the 0.1% ETF transaction tax on
-# sells (0052/00662 are ETFs -> 0.1%, not the 0.3% ordinary-stock rate).
-BROKERAGE = 0.1425 / 100 * 0.6
+# Realistic Taiwan retail costs: brokerage discounted to match gridbot.py's
+# actual live FEE_DISCOUNT (0.38, i.e. pay 38% of the 0.1425% headline rate)
+# each side, plus the 0.1% ETF transaction tax on sells (0052/00662 are
+# ETFs -> 0.1%, not the 0.3% ordinary-stock rate).
+BROKERAGE = 0.1425 / 100 * 0.38
 ETF_TAX = 0.1 / 100
 
 
@@ -117,27 +119,35 @@ def backtest(df: pd.DataFrame, ratio: pd.Series, params: dict, init_capital: flo
         if qty_upper > 0 and money < up * qty_upper:
             qty_upper = max(int(money / up), 0)
         if qty_upper != 0 and abs(qty_upper) * up >= trigger:
-            cost = up * qty_upper
             if qty_upper > 0:
-                if money > cost:
-                    money -= cost + cost * BROKERAGE
+                principal = math.floor(up * qty_upper)
+                commission = math.floor(principal * BROKERAGE)
+                cost = principal + commission
+                if money >= cost:
+                    money -= cost
                     upper_shares += qty_upper
             else:
-                proceeds = up * abs(qty_upper)
-                money += proceeds - proceeds * (BROKERAGE + ETF_TAX)
+                principal = math.floor(up * abs(qty_upper))
+                commission = math.floor(principal * BROKERAGE)
+                tax = math.floor(principal * ETF_TAX)
+                money += principal - commission - tax
                 upper_shares += qty_upper  # negative
 
         if qty_lower > 0 and money < lp * qty_lower:
             qty_lower = max(int(money / lp), 0)
         if qty_lower != 0 and abs(qty_lower) * lp >= trigger:
             if qty_lower > 0:
-                cost = lp * qty_lower
-                if money > cost:
-                    money -= cost + cost * BROKERAGE
+                principal = math.floor(lp * qty_lower)
+                commission = math.floor(principal * BROKERAGE)
+                cost = principal + commission
+                if money >= cost:
+                    money -= cost
                     lower_shares += qty_lower
             else:
-                proceeds = lp * abs(qty_lower)
-                money += proceeds - proceeds * (BROKERAGE + ETF_TAX)
+                principal = math.floor(lp * abs(qty_lower))
+                commission = math.floor(principal * BROKERAGE)
+                tax = math.floor(principal * ETF_TAX)
+                money += principal - commission - tax
                 lower_shares += qty_lower
 
         equity[i] = money + upper_shares * up + lower_shares * lp

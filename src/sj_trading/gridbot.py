@@ -110,6 +110,7 @@ class GridBot:
 
     def _truncate_at_bad_data(self, close_series):
         pct_change = close_series.pct_change().abs()
+        # 找出真正超過 30% 單日跳空的極端異常點
         bad = pct_change[pct_change > self.DAILY_LIMIT_PCT]
         if bad.empty:
             return close_series
