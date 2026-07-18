@@ -28,10 +28,17 @@ BROKERAGE = 0.1425 / 100 * 0.6
 ETF_TAX = 0.1 / 100
 
 
-# TWSE's daily price move limit is +-10%; anything beyond this (with a
-# small buffer for rounding) cannot be real price action - only a data
-# defect (e.g. an unlabeled/missing split adjustment).
-DAILY_LIMIT_PCT = 0.12
+# NOT a flat +-10%: TWSE exempts foreign-index-linked ETFs (e.g. 00662,
+# tracks NASDAQ-100) from the domestic price limit, so single-day moves up
+# to ~14% are real (confirmed against TWSE: 00662 +14.3%/+12.3% on
+# 2025-04-07/04-10, the tariff-shock selloff). Full-history scan of both
+# tickers found exactly one move exceeding this: 0052's genuine 1-for-7
+# split (+85.7%, 2025-11-17). 0.30 sits comfortably above all observed real
+# volatility and comfortably below any real split. A lower threshold here
+# is worse than in the live bot's truncate: this function *rescales*
+# everything before a false-positive jump, silently distorting real prices
+# rather than just dropping history.
+DAILY_LIMIT_PCT = 0.30
 
 
 def _adjust_split_defects(close_series: pd.Series) -> pd.Series:

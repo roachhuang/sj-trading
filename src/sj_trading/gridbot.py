@@ -1,7 +1,7 @@
 import shioaji as sj
 import yfinance as yf
 
-from typing import Dict, Optional
+from typing import Dict
 from shioaji import OrderState, OrderStatus
 from threading import Lock
 import datetime
@@ -42,10 +42,16 @@ class GridBot:
         # keep track of MA calulated date
         self.year = self.month = self.day = 0
         self.trigger = 2000  # 最低交易金額門檻,避免交易金額太小,錢被手續費低消吃光光
-        self.stockPrice = self.stockBid = self.stockAsk = {}
+        # Must be 3 independent dicts, not a chained assignment - gridbot_body.py
+        # syncs these from 3 separately-maintained dicts every cycle; aliasing
+        # them together made every write collapse onto whichever was written
+        # last (stockAsk), so stockPrice/stockBid silently became the ask price.
+        self.stockPrice = {}
+        self.stockBid = {}
+        self.stockAsk = {}
         self.initmoney = self.g_settlement = 0
         self.upperid, self.lowerid = TICKERS
-        self.live_cash_right_now = self.upperprice = self.uppershare = self.lowerprice = self.lowershare = 0
+        self.live_cash_right_now = self.uppershare = self.lowershare = 0
         self.api = api
         self.logging = logging
         self.api.set_order_callback(self.order_cb)
@@ -65,7 +71,7 @@ class GridBot:
                     # shares); IntradayOdd fills are already in raw shares.
                     qty = msg["quantity"] * 1000 if msg["order_lot"] == "Common" else msg["quantity"]
                     principal = math.floor(price * qty)
-                    min_brokerage_fee = 20 if msg["order_lot"] == "Common" else 1
+                    min_brokerage_fee = 20 if msg["order_lot"] == "Common" else self.MIN_FEE
                     commission = max(min_brokerage_fee, math.floor(principal*self.FEE_RATE * self.FEE_DISCOUNT))
 
                     # `with` guarantees release even if something below raises -
@@ -89,11 +95,18 @@ class GridBot:
     #########################################
     # 7.1 計算策略目標部位(百分比)
     ###########################################
-    # TWSE's daily price move limit is +-10%; anything beyond this (with a
-    # small buffer for rounding) cannot be real price action - only a data
-    # defect (e.g. an unlabeled/missing split adjustment). Mixing pre/post
+    # A jump beyond this (with a buffer) cannot be real price action - only a
+    # data defect (e.g. an unlabeled/missing split adjustment). Mixing pre/post
     # scales across such a jump corrupts any average computed over it.
-    DAILY_LIMIT_PCT = 0.12
+    #
+    # NOT a flat +-10%: TWSE exempts foreign-index-linked ETFs (e.g. 00662,
+    # tracks NASDAQ-100) from the domestic price limit, so single-day moves
+    # up to ~14% are real (confirmed against TWSE: 00662 +14.3%/+12.3% on
+    # 2025-04-07/04-10, the tariff-shock selloff). Full-history scan of both
+    # tickers found exactly one move exceeding this: 0052's genuine 1-for-7
+    # split (+85.7%, 2025-11-17). 0.30 sits comfortably above all observed
+    # real volatility and comfortably below any real split.
+    DAILY_LIMIT_PCT = 0.30
 
     def _truncate_at_bad_data(self, close_series):
         pct_change = close_series.pct_change().abs()
