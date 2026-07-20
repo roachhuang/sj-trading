@@ -6,16 +6,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A grid-trading bot for Taiwan-listed ETFs (0052 / 00662) built on SinoPac's **Shioaji** API. It runs once per trading day (login → subscribe to quotes → rebalance every 3 minutes → exit), either locally or via the scheduled GitHub Actions workflow.
 
+## Trading Bot Safety
+- When writing cancel/close order scripts, ALWAYS filter to the specific target tickers (e.g., 0052, 00662) — never operate on account-wide orders.
+- Before trusting a 'bug' in position/order data, verify the diagnostic script itself is correct.
+
 ## Commands
 
 ```bash
 uv sync                                  # install/update deps into .venv
 uv run python -m sj_trading.gridbot_body # run the bot (needs SJ_API_KEY/SJ_SEC_KEY in env or .env)
 uv run python -m sj_trading.backtest     # backtest/grid-search GridBot.parameters against historical data
+uv run pytest tests/                     # safety-invariant tests (cancel scope, fee floors, aliasing, capital round-trip, TWSE cross-checks)
 uv lock                                  # regenerate uv.lock after editing dependencies in pyproject.toml
 ```
 
-There is no test suite or linter configured in this repo yet.
+If your shell has a ROS environment sourced, `PYTHONPATH` will contain ROS's `launch_testing` package, which registers a broken pytest plugin (`ModuleNotFoundError: No module named 'yaml'`) — run `PYTHONPATH= uv run pytest tests/` instead.
+
+There is no linter configured in this repo yet.
 
 ## Environment variables
 
@@ -27,7 +34,7 @@ Read from `.env` (gitignored, not committed) or process env:
 | `SJ_PRODUCTION` | `"true"` switches to live trading + requires CA activation; anything else (default) stays in simulation |
 | `SJ_CA_PATH` / `SJ_CA_PASSWD` | Only read when `SJ_PRODUCTION=true`, to activate the CA cert for live orders |
 
-In CI (`.github/workflows/gridbot.yml`), `SJ_API_KEY`/`SJ_SEC_KEY` come from GitHub repo secrets and `SJ_PRODUCTION` is hardcoded to `"false"`, so scheduled runs are simulation-only until that's deliberately changed.
+In CI (`.github/workflows/gridbot.yml`), `SJ_API_KEY`/`SJ_SEC_KEY` come from GitHub repo secrets and `SJ_PRODUCTION` is hardcoded to `"true"` (since 2026-07-12, `a3a852a`) — **scheduled runs place real live orders**, not simulated ones. The CA cert is written from the `SJ_CA_PFX_B64` secret each run.
 
 ## Self-learning
 
@@ -57,7 +64,11 @@ When I correct you, or you catch yourself making a mistake: before continuing, a
 
 **`src/sj_trading/backtest.py`** — offline research tool, not wired into the live bot. Replicates `calculateGrid`/`calculateSharetarget`/`sendOrders` day-by-day over historical daily closes (trigger threshold, ±999 share clamp, cash-constrained sizing, realistic fees included), and grid-searches the five `GridBot.parameters` values. `GridBot.parameters` was last set from this tool's output (backtested 2016–2026, out-of-sample validated on a held-out 2023–2026 slice) — re-run every 6–12 months, or sooner if live daily P&L (see below) diverges meaningfully from backtested expectations, since parameters fit to one historical window can drift out of tune as market regimes shift.
 
-**`.github/workflows/gridbot.yml`** — scheduled trigger at `50 0 * * 1-5` (00:50 UTC = 8:50am Taipei, deliberately off the top-of-hour mark since exact-hour slots are more prone to delay/drop) plus manual `workflow_dispatch`. GitHub's cron has no concept of Taiwan market holidays, so it still fires on holidays (harmless no-op against the API that day). `timeout-minutes: 330` caps a run in case the wall-clock exit logic above doesn't fire as expected.
+**`.github/workflows/gridbot.yml`** — scheduled trigger at `23 23 * * 0-4` (23:23 UTC Sun-Thu = 07:23 Taipei Mon-Fri, deliberately off the top-of-hour mark since exact-hour slots are more prone to delay/drop; this value has drifted across several commits, so re-check it directly rather than trusting this doc) plus manual `workflow_dispatch`. GitHub's cron has no concept of Taiwan market holidays, so it still fires on holidays (harmless no-op against the API that day). `timeout-minutes: 360` caps a run in case the wall-clock exit logic above doesn't fire as expected. `concurrency: group: gridbot-live-trading` with `cancel-in-progress: false` prevents two overlapping live-trading runs (e.g. a late schedule + a manual dispatch) from placing duplicate orders against the same account.
+
+## Environment
+- Helper modules live INSIDE the repo, not in ~/projects/helpers. Do not read external directories unless explicitly told.
+- CI uses `uv sync`; never delete package `__init__.py` files as this breaks the build.
 
 ## State that persists across runs
 
@@ -66,4 +77,7 @@ When I correct you, or you catch yourself making a mistake: before continuing, a
   - **Local and CI copies now do sync**, since it's the same tracked file both places read/write — a local edit via `set_init_invest_amt.py` only takes effect on the next CI run once committed and pushed. The `seed_money`/`seed_only` `workflow_dispatch` inputs still exist as a phone/CLI-only correction path (`seed_only=true` skips CA activation and the live trading run, only writing and committing the new balance), but a direct edit + push works too.
   - A hard-cancelled CI job still can't reach the commit-back step (same as the old cache save) — that's inherent to force-cancellation, not a storage-backend property. After any forced cancel, reconcile `money.json` manually against actual broker fills before the next scheduled run.
 - `gridbot.log` — INFO-level log written during the trading loop (`*.log` is gitignored).
+
+## Verification
+- After refactors or bug fixes to trading logic, verify with dry-runs and cross-check against authoritative sources (e.g., TWSE) before considering the task complete.
 
