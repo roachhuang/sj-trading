@@ -7,6 +7,8 @@ from threading import Lock
 import datetime
 import math
 
+import sj_trading.misc as misc
+
 g_upperid = "0052"
 g_lowerid = "00662"
 TICKERS = (g_upperid, g_lowerid)
@@ -87,7 +89,9 @@ class GridBot:
                         else:
                             pass
                         self.live_cash_right_now = int(self.initmoney + self.g_settlement)
+                        cash_to_persist = self.live_cash_right_now
                     self.logging.info(f"deal: {code} {action} {qty}@{price}, live available cash right now: {self.live_cash_right_now}")
+                    misc.persist_money("money.json", cash_to_persist)
                 except Exception as e:
                     self.logging.error(f"order_cb settlement update failed: {e}")
         self.logging.info(f"in order_cb, stat: {stat}")
