@@ -82,10 +82,10 @@ class GridBot:
                     # forever, deadlocking every future order_cb/sendOrders call.
                     with self.mutexgSettle:
                         if action == "Buy":
-                            self.g_settlement -= principal + commission
+                            self.g_settlement -= (principal + commission)
                         elif action == "Sell":
                             tax = math.floor(principal*self.TAX_RATE_ETF)
-                            self.g_settlement += principal - tax - commission
+                            self.g_settlement += (principal - tax - commission)
                         else:
                             pass
                         self.live_cash_right_now = int(self.initmoney + self.g_settlement)
@@ -318,9 +318,6 @@ class GridBot:
             qty = max(int(available / price), 0)
         # trigger=NT$2000 as a preventative of commision.
         if qty == 0 or abs(qty) * self.stockPrice[symbol] < self.trigger:
-            return available
-
-        if qty > 0 and available <= price * qty:
             return available
 
         direction = "Buy" if qty > 0 else "Sell"

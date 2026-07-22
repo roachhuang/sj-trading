@@ -35,10 +35,18 @@ def persist_money(filename, value):
             check=True,
         )
         subprocess.run(["git", "fetch", "origin", branch], check=True)
-        subprocess.run(["git", "rebase", f"origin/{branch}"], check=True)
+        rebase = subprocess.run(["git", "rebase", f"origin/{branch}"])
+        if rebase.returncode != 0:
+            # A conflicted rebase leaves .git/rebase-merge behind - every
+            # later git command in this job (including the workflow's own
+            # end-of-run commit step) fails until it's cleaned up.
+            subprocess.run(["git", "rebase", "--abort"])
+            logging.error("persist_money: rebase conflict on git commit/push, aborted")
+            return
         subprocess.run(["git", "push", "origin", f"HEAD:{branch}"], check=True)
     except Exception as e:
         logging.error(f"persist_money: git commit/push failed: {e}")
+        subprocess.run(["git", "rebase", "--abort"])
 
 def read_json(filename):
     """Reads capital record from a JSON file.

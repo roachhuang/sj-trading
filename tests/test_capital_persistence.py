@@ -56,11 +56,14 @@ def test_persist_money_commits_and_pushes_in_ci(tmp_path, monkeypatch):
     commands = []
 
     class FakeCompletedProcess:
-        returncode = 1  # non-zero = git diff found a change
+        def __init__(self, returncode):
+            self.returncode = returncode
 
     def fake_run(cmd, *a, **k):
         commands.append(cmd)
-        return FakeCompletedProcess()
+        # diff finds a change (1) and rebase succeeds cleanly (0)
+        returncode = 1 if cmd[:2] == ["git", "diff"] else 0
+        return FakeCompletedProcess(returncode)
 
     monkeypatch.setattr("subprocess.run", fake_run)
     monkeypatch.setattr("subprocess.check_output", lambda *a, **k: "master\n")
@@ -91,3 +94,33 @@ def test_persist_money_skips_commit_when_value_unchanged(tmp_path, monkeypatch):
     misc.persist_money(str(path), 500)
 
     assert commands == [["git", "diff", "--quiet", "--", str(path)]]
+
+
+def test_persist_money_aborts_rebase_on_conflict(tmp_path, monkeypatch):
+    """A conflicted rebase must be aborted (not left half-finished) and must
+    never push - a dangling .git/rebase-merge would break every later git
+    command in the same job, including the workflow's own commit step."""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    commands = []
+
+    class FakeCompletedProcess:
+        def __init__(self, returncode):
+            self.returncode = returncode
+
+    def fake_run(cmd, *a, **k):
+        commands.append(cmd)
+        if cmd[:2] == ["git", "diff"]:
+            return FakeCompletedProcess(1)
+        if cmd[:2] == ["git", "rebase"] and "--abort" not in cmd:
+            return FakeCompletedProcess(1)  # conflict
+        return FakeCompletedProcess(0)
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("subprocess.check_output", lambda *a, **k: "master\n")
+    path = tmp_path / "money.json"
+
+    misc.persist_money(str(path), 500)
+
+    assert misc.read_json(str(path)) == 500
+    assert ["git", "rebase", "--abort"] in commands
+    assert not any(cmd[:2] == ["git", "push"] for cmd in commands)
