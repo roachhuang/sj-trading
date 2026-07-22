@@ -15,7 +15,7 @@ TAX_RATE_ETF = GridBot.TAX_RATE_ETF
 
 def make_bot():
     bot = GridBot(MagicMock(), MagicMock())
-    bot.initmoney = 0
+    bot.start_cash = 0
     bot.live_cash_right_now = 0
     return bot
 
@@ -70,13 +70,25 @@ def test_percentage_fee_wins_over_floor_on_large_common_lot_trade():
     assert bot.g_settlement == -(principal + pct_fee)
 
 
-def test_live_cash_right_now_reflects_initmoney_plus_settlement():
+def test_live_cash_right_now_reflects_start_cash_plus_settlement():
     bot = make_bot()
-    bot.initmoney = 50000
+    bot.start_cash = 50000
     bot.live_cash_right_now = 50000
     bot.order_cb(OrderState.StockDeal, deal_msg(bot.lowerid, "Buy", 10, 1, "IntradayOdd"))
 
-    assert bot.live_cash_right_now == bot.initmoney + bot.g_settlement
+    assert bot.live_cash_right_now == bot.start_cash + bot.g_settlement
+
+
+def test_live_cash_right_now_does_not_double_count_prior_fills():
+    """A 2nd fill must not re-add the 1st fill's settlement delta - g_settlement
+    is cumulative, so live_cash_right_now must be recomputed from start_cash
+    each time, not accumulated on top of its own prior value."""
+    bot = make_bot()
+    bot.start_cash = 100000
+    bot.order_cb(OrderState.StockDeal, deal_msg(bot.upperid, "Buy", 10, 1, "IntradayOdd"))
+    bot.order_cb(OrderState.StockDeal, deal_msg(bot.upperid, "Sell", 10, 1, "IntradayOdd"))
+
+    assert bot.live_cash_right_now == bot.start_cash + bot.g_settlement
 
 
 def test_deal_for_untracked_ticker_does_not_touch_settlement():

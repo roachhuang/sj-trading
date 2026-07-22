@@ -1,8 +1,6 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 import json
 import logging
-import os
-import subprocess
 
 def write_json(filename, obj):
     try:
@@ -10,43 +8,6 @@ def write_json(filename, obj):
             json.dump(obj, handle)
     except Exception as e:
         logging.error(f"write_json failed for {filename}: {e}")
-
-def persist_money(filename, value):
-    """Write filename locally, then commit+push it immediately when running
-    in GitHub Actions. A hard-cancelled or timed-out job never reaches the
-    workflow's own end-of-run commit step, so without this, fills recorded
-    between the last periodic checkpoint and a forced cancel are lost from
-    git even though they happened. Runs are gated to CI (GITHUB_ACTIONS=true)
-    only - a local/manual run must never push to the remote on every fill."""
-    write_json(filename, value)
-    if os.environ.get("GITHUB_ACTIONS") != "true":
-        return
-    try:
-        if subprocess.run(["git", "diff", "--quiet", "--", filename]).returncode == 0:
-            return
-        branch = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True
-        ).strip()
-        subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
-        subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
-        subprocess.run(["git", "add", filename], check=True)
-        subprocess.run(
-            ["git", "commit", "-m", f"Update {filename} (mid-run, {datetime.now(timezone.utc).isoformat()})"],
-            check=True,
-        )
-        subprocess.run(["git", "fetch", "origin", branch], check=True)
-        rebase = subprocess.run(["git", "rebase", f"origin/{branch}"])
-        if rebase.returncode != 0:
-            # A conflicted rebase leaves .git/rebase-merge behind - every
-            # later git command in this job (including the workflow's own
-            # end-of-run commit step) fails until it's cleaned up.
-            subprocess.run(["git", "rebase", "--abort"])
-            logging.error("persist_money: rebase conflict on git commit/push, aborted")
-            return
-        subprocess.run(["git", "push", "origin", f"HEAD:{branch}"], check=True)
-    except Exception as e:
-        logging.error(f"persist_money: git commit/push failed: {e}")
-        subprocess.run(["git", "rebase", "--abort"])
 
 def read_json(filename):
     """Reads capital record from a JSON file.

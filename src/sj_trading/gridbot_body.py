@@ -53,16 +53,14 @@ def GridbotBody(api):
     bot1.getPositions()
 
     try:
-        bot1.initmoney = misc.read_json('money.json')
+        bot1.start_cash = misc.read_json('money.json')
     except Exception as e:
-        logging.error(f"read_json failed, defaulting initmoney to 0: {e}")
-        bot1.initmoney = 0
-    # bot1.live_cash_right_now starts at 0 in GridBot.__init__ and is otherwise only set
-    # inside order_cb on a fill; without this line, sendOrders sees no cash
-    # (all buys clipped to 0) and a no-fill day persists 0 to money.json,
-    # wiping the carried-over balance.
+        logging.error(f"read_json failed: {e}")
+    # order_cb recomputes live_cash_right_now = start_cash + g_settlement on every
+    # fill, so start_cash must hold the day's fixed opening balance (not itself
+    # be updated) - live_cash_right_now is the one that moves.
     # 昨天剩下的 cash =今天可用的 cash
-    bot1.live_cash_right_now = bot1.initmoney
+    bot1.live_cash_right_now = bot1.start_cash
     # reads bot1.uppershare/lowershare fresh on each call - they change as
     # the bot trades through the day, so this must not be memoized.
     def stock_value():
@@ -70,7 +68,7 @@ def GridbotBody(api):
         return sum(stockPrice[tid] * shares[tid] for tid in TICKERS)
 
     # capital @ this point in time, not necessary today's mkt open prices coz github's delaylaunch
-    totalcapital = bot1.initmoney + stock_value()
+    totalcapital = bot1.live_cash_right_now + stock_value()
     # 更新Trigger大小,在資產很多的時候固定2000會有點少
     bot1.trigger = max(2000, totalcapital*0.005)
 
@@ -83,7 +81,7 @@ def GridbotBody(api):
             f"pnl={pnl:.2f} ({pnl_pct:.2f}%)"
         )
 
-    logging.info("starting cash for today's run: {:.2f}".format(bot1.initmoney))
+    logging.info("starting cash for today's run: {:.2f}".format(bot1.live_cash_right_now))
     logging.info("uppershare value: {:.2f}".format(stockPrice[g_upperid]*bot1.uppershare))
     logging.info("lowershare value: {:.2f}".format(stockPrice[g_lowerid]*bot1.lowershare))
     logging.info("totalcapital: {:.2f}".format(totalcapital))

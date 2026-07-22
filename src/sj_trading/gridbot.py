@@ -7,8 +7,6 @@ from threading import Lock
 import datetime
 import math
 
-import sj_trading.misc as misc
-
 g_upperid = "0052"
 g_lowerid = "00662"
 TICKERS = (g_upperid, g_lowerid)
@@ -51,7 +49,7 @@ class GridBot:
         self.stockPrice = {}
         self.stockBid = {}
         self.stockAsk = {}
-        self.initmoney = self.g_settlement = 0
+        self.start_cash = self.g_settlement = 0
         self.upperid, self.lowerid = TICKERS
         self.live_cash_right_now = self.uppershare = self.lowershare = 0
         self.api = api
@@ -88,10 +86,8 @@ class GridBot:
                             self.g_settlement += (principal - tax - commission)
                         else:
                             pass
-                        self.live_cash_right_now = int(self.initmoney + self.g_settlement)
-                        cash_to_persist = self.live_cash_right_now
+                        self.live_cash_right_now = self.start_cash + self.g_settlement
                     self.logging.info(f"deal: {code} {action} {qty}@{price}, live available cash right now: {self.live_cash_right_now}")
-                    misc.persist_money("money.json", cash_to_persist)
                 except Exception as e:
                     self.logging.error(f"order_cb settlement update failed: {e}")
         self.logging.info(f"in order_cb, stat: {stat}")
@@ -318,6 +314,9 @@ class GridBot:
             qty = max(int(available / price), 0)
         # trigger=NT$2000 as a preventative of commision.
         if qty == 0 or abs(qty) * self.stockPrice[symbol] < self.trigger:
+            return available
+
+        if qty > 0 and available <= price * qty:
             return available
 
         direction = "Buy" if qty > 0 else "Sell"
