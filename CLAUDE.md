@@ -20,8 +20,6 @@ uv run pytest tests/                     # safety-invariant tests (cancel scope,
 uv lock                                  # regenerate uv.lock after editing dependencies in pyproject.toml
 ```
 
-If your shell has a ROS environment sourced, `PYTHONPATH` will contain ROS's `launch_testing` package, which registers a broken pytest plugin (`ModuleNotFoundError: No module named 'yaml'`) — run `PYTHONPATH= uv run pytest tests/` instead.
-
 There is no linter configured in this repo yet.
 
 ## Environment variables
@@ -67,7 +65,6 @@ When I correct you, or you catch yourself making a mistake: before continuing, a
 **`.github/workflows/gridbot.yml`** — scheduled trigger at `23 23 * * 0-4` (23:23 UTC Sun-Thu = 07:23 Taipei Mon-Fri, deliberately off the top-of-hour mark since exact-hour slots are more prone to delay/drop; this value has drifted across several commits, so re-check it directly rather than trusting this doc) plus manual `workflow_dispatch`. GitHub's cron has no concept of Taiwan market holidays, so it still fires on holidays (harmless no-op against the API that day). `timeout-minutes: 360` caps a run in case the wall-clock exit logic above doesn't fire as expected. `concurrency: group: gridbot-live-trading` with `cancel-in-progress: false` prevents two overlapping live-trading runs (e.g. a late schedule + a manual dispatch) from placing duplicate orders against the same account.
 
 ## Environment
-- Helper modules live INSIDE the repo, not in ~/projects/helpers. Do not read external directories unless explicitly told.
 - CI uses `uv sync`; never delete package `__init__.py` files as this breaks the build.
 
 ## State that persists across runs
