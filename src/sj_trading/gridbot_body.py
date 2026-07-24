@@ -73,12 +73,26 @@ def GridbotBody(api):
     bot1.trigger = max(2000, totalcapital*0.005)
 
     def log_daily_pnl():
-        end_capital = bot1.live_cash_right_now + stock_value()
-        pnl = end_capital - totalcapital
-        pnl_pct = pnl / totalcapital * 100 if totalcapital else 0
+        today = datetime.date.today().isoformat()
+        try:
+            realized_list = api.list_profit_loss(
+                api.stock_account, begin_date=today, end_date=today, unit=sj.Unit.Share
+            )
+            realized = sum(p.pnl for p in realized_list if p.code in TICKERS)
+        except Exception as e:
+            logging.error(f"list_profit_loss failed: {e}")
+            realized = 0
+
+        try:
+            positions = api.list_positions(api.stock_account, unit=sj.Unit.Share)
+            unrealized = sum(p.pnl for p in positions if p.code in TICKERS)
+        except Exception as e:
+            logging.error(f"list_positions failed: {e}")
+            unrealized = 0
+
         logging.info(
-            f"daily P&L: start_capital={totalcapital:.2f}, end_capital={end_capital:.2f}, "
-            f"pnl={pnl:.2f} ({pnl_pct:.2f}%)"
+            f"daily P&L (TICKERS): realized={realized:.2f}, unrealized={unrealized:.2f}, "
+            f"total={realized + unrealized:.2f}"
         )
 
     logging.info("starting cash for today's run: {:.2f}".format(bot1.live_cash_right_now))
