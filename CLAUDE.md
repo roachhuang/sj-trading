@@ -16,9 +16,11 @@ A grid-trading bot for Taiwan-listed ETFs (0052 / 00662) built on SinoPac's **Sh
 uv sync                                  # install/update deps into .venv
 uv run python -m sj_trading.gridbot_body # run the bot (needs SJ_API_KEY/SJ_SEC_KEY in env or .env)
 uv run python -m sj_trading.backtest     # backtest/grid-search GridBot.parameters against historical data
-uv run pytest tests/                     # safety-invariant tests (cancel scope, fee floors, aliasing, capital round-trip, TWSE cross-checks)
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/  # safety-invariant tests (cancel scope, fee floors, aliasing, capital round-trip, TWSE cross-checks)
 uv lock                                  # regenerate uv.lock after editing dependencies in pyproject.toml
 ```
+
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` is required, not cosmetic: if the shell has a ROS environment sourced, `PYTHONPATH` carries ROS's `launch_testing`/`launch_pytest`/`ament_*` packages, several of which register broken pytest11 entry points (`ModuleNotFoundError: No module named 'yaml'`). This project has no ROS dependency — don't touch `PYTHONPATH` or `~/.bashrc`'s ROS sourcing (used by other projects) to fix it; this env var disables pytest's entry-point plugin autoload instead.
 
 ## Environment variables
 

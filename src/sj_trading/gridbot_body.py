@@ -126,19 +126,19 @@ def GridbotBody(api):
     
     @api.on_tick_stk_v1()
     def STKtick_callback(exchange: Exchange, tick: TickSTKv1):
-        code = tick['code']
+        code = tick.code
         mutexDict[code].acquire()
-        stockPrice[code] = float(tick['close'])
+        stockPrice[code] = float(tick.close)
         mutexDict[code].release()
     api.quote.set_on_tick_stk_v1_callback(STKtick_callback)
 
     # 處理bidask即時資料更新的部分
     @api.on_bidask_stk_v1()
     def STK_BidAsk_callback(exchange: Exchange, bidask: BidAskSTKv1):
-        code = bidask['code']
+        code = bidask.code
         mutexBidAskDict[code].acquire()
-        bidlist = [float(i) for i in bidask['bid_price']]
-        asklist = [float(i) for i in bidask['ask_price']]
+        bidlist = [float(i) for i in bidask.bid_price]
+        asklist = [float(i) for i in bidask.ask_price]
         stockBid[code] = bidlist[0]
         stockAsk[code] = asklist[0]
         mutexBidAskDict[code].release()
