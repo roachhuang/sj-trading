@@ -20,8 +20,6 @@ uv run pytest tests/                     # safety-invariant tests (cancel scope,
 uv lock                                  # regenerate uv.lock after editing dependencies in pyproject.toml
 ```
 
-There is no linter configured in this repo yet.
-
 ## Environment variables
 
 Read from `.env` (gitignored, not committed) or process env:
