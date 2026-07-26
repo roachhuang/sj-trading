@@ -6,6 +6,7 @@ import shioaji as sj
 import logging
 import datetime
 import time
+import sys
 from threading import Lock
 # 處理ticks即時資料更新的部分
 from shioaji import BidAskSTKv1, TickSTKv1
@@ -23,6 +24,23 @@ g_lowerid = '00662'
 TICKERS = (g_upperid, g_lowerid)
 ENABLE_PREMARKET = False
 ans = ''
+
+
+def evaluate_daily_drift(today_equity: float, prior_equity: float | None,
+                          stats: dict | None) -> bool | None:
+    """Pure decision core for the end-of-day P&L drift check - no API calls,
+    so it's directly testable. None means 'skip, don't fail the job': a
+    missing/zero prior-day equity baseline must never look like drift.
+    Compares day-over-day mark-to-market equity change (matching the
+    backtest's eq.pct_change() units) rather than broker P&L flows, which
+    mix a daily flow (realized) with a cumulative level (unrealized) and
+    would false-trigger persistently once a held position has moved more
+    than the threshold cumulatively."""
+    if not prior_equity:
+        return None
+    pnl_pct = (today_equity - prior_equity) / prior_equity
+    return misc.is_pnl_outlier(pnl_pct, stats)
+
 
 def GridbotBody(api):
     # gridBody runs from here
@@ -57,6 +75,18 @@ def GridbotBody(api):
         bot1.start_cash = misc.read_json('money.json')
     except Exception as e:
         logging.error(f"read_json failed: {e}")
+
+    try:
+        backtest_stats = misc.read_json('backtest_stats.json')
+    except Exception as e:
+        logging.warning(f"backtest_stats.json unavailable, skipping drift check: {e}")
+        backtest_stats = None
+
+    try:
+        prior_equity = misc.read_json('equity_snapshot.json')
+    except Exception as e:
+        logging.warning(f"equity_snapshot.json unavailable, skipping drift check: {e}")
+        prior_equity = None
     # order_cb recomputes live_cash_right_now = start_cash + g_settlement on every
     # fill, so start_cash must hold the day's fixed opening balance (not itself
     # be updated) - live_cash_right_now is the one that moves.
@@ -73,7 +103,7 @@ def GridbotBody(api):
     # 更新Trigger大小,在資產很多的時候固定2000會有點少
     bot1.trigger = max(2000, totalcapital*0.005)
 
-    def log_daily_pnl():
+    def log_daily_pnl(today_equity):
         today = datetime.date.today().isoformat()
         try:
             realized_list = api.list_profit_loss(
@@ -95,6 +125,20 @@ def GridbotBody(api):
             f"daily P&L (TICKERS): realized={realized:.2f}, unrealized={unrealized:.2f}, "
             f"total={realized + unrealized:.2f}"
         )
+
+        try:
+            drift = evaluate_daily_drift(today_equity, prior_equity, backtest_stats)
+            if drift:
+                pnl_pct = (today_equity - prior_equity) / prior_equity
+                mean, std = backtest_stats["mean_daily_return"], backtest_stats["std_daily_return"]
+                z = (pnl_pct - mean) / std
+                logging.error(
+                    f"drift detected: pnl_pct={pnl_pct:.4f} mean={mean:.4f} std={std:.4f} z={z:.2f}"
+                )
+        except Exception as e:
+            logging.error(f"drift check failed, skipping: {e}")
+            drift = None
+        return drift
 
     logging.info("starting cash for today's run: {:.2f}".format(bot1.live_cash_right_now))
     logging.info("uppershare value: {:.2f}".format(stockPrice[g_upperid]*bot1.uppershare))
@@ -149,6 +193,7 @@ def GridbotBody(api):
         # print(f'Event code: {event_code} | Event: {event}')
 
     # 用來更新買賣訊號和下單的迴圈
+    drift_result = None
     try:
         while (1):
             current_time = time.time()
@@ -174,9 +219,11 @@ def GridbotBody(api):
             # via the exchange - just persist and stop instead of looping
             # forever on `continue` until the CI job timeout kills it.
             if (hour >= 14):
-                log_daily_pnl()
+                today_equity = bot1.live_cash_right_now + stock_value()
+                drift_result = log_daily_pnl(today_equity)
                 try:
                     misc.write_json("money.json", bot1.live_cash_right_now)
+                    misc.write_json("equity_snapshot.json", today_equity)
                 except Exception as e:
                     logging.error('jobs_per1min  Error Message B: ' + str(e))
                 break
@@ -185,8 +232,10 @@ def GridbotBody(api):
             if (hour == 13 and minute > 20):
                 try:
                     bot1.cancelOrders()
-                    log_daily_pnl()
+                    today_equity = bot1.live_cash_right_now + stock_value()
+                    drift_result = log_daily_pnl(today_equity)
                     misc.write_json("money.json", bot1.live_cash_right_now)
+                    misc.write_json("equity_snapshot.json", today_equity)
                 except Exception as e:
                     logging.error('jobs_per1min  Error Message A: ' + str(e))
                 break
@@ -226,9 +275,11 @@ def GridbotBody(api):
             bot1.cancelOrders()
         except Exception as e:
             logging.error(f"cancelOrders failed on KeyboardInterrupt: {e}")
-        log_daily_pnl()
+        today_equity = bot1.live_cash_right_now + stock_value()
+        drift_result = log_daily_pnl(today_equity)
         try:
             misc.write_json("money.json", bot1.live_cash_right_now)
+            misc.write_json("equity_snapshot.json", today_equity)
         except Exception as e:
             logging.error(f"write_json failed on KeyboardInterrupt: {e}")
         try:
@@ -239,6 +290,8 @@ def GridbotBody(api):
             print(
                 "This code is always executed, regardless of whether an exception occurred or not")
         exit
+
+    return drift_result
 
 # start here
 def main():
@@ -261,7 +314,7 @@ def main():
         print(api.usage())
 
     # starting point of the code running
-    GridbotBody(api)
+    drift_result = GridbotBody(api)
 
     # GridbotBody returns once its internal loop reaches ~14:00-15:00.
     # Log out and exit here so a scheduled run (e.g. triggered once per
@@ -271,6 +324,9 @@ def main():
         api.logout()
     except Exception as e:
         logging.error(f"failed to call api.logout: {e}")
+
+    if drift_result:
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()
