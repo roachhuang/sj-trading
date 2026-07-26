@@ -320,7 +320,7 @@ class GridBot:
             return available
 
         direction = "Buy" if qty > 0 else "Sell"
-        contract = self.api.Contracts.Stocks[symbol]
+        contract = self.api.contracts.get(symbol)
         # A target delta can exceed 999 shares (e.g. 3950) - IntradayOdd
         # orders only accept 0-999 shares, so anything >=1000 needs a
         # separate Common-lot order (quantity in lots) for the round-lot

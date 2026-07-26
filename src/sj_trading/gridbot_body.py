@@ -8,7 +8,7 @@ import datetime
 import time
 from threading import Lock
 # 處理ticks即時資料更新的部分
-from shioaji import BidAskSTKv1, Exchange, TickSTKv1
+from shioaji import BidAskSTKv1, TickSTKv1
 
 ####################################################
 import os
@@ -26,8 +26,9 @@ ans = ''
 
 def GridbotBody(api):
     # gridBody runs from here
+    contracts = {tid: api.contracts.get(tid) for tid in TICKERS}
     # 成交價
-    snaprice = {tid: api.snapshots([api.Contracts.Stocks[tid]]) for tid in TICKERS}
+    snaprice = {tid: api.snapshots([contracts[tid]]) for tid in TICKERS}
     stockPrice = {tid: snaprice[tid][0]['close'] for tid in TICKERS}
     # 最高買價
     stockBid = {tid: snaprice[tid][0]['close'] for tid in TICKERS}
@@ -119,22 +120,20 @@ def GridbotBody(api):
     # 告訴系統要訂閱
     # 1.ticks資料(用來看成交價)
     # 2.買賣價資料
-    contracts = {tid: api.Contracts.Stocks[tid] for tid in TICKERS}
     for tid in TICKERS:
         api.subscribe(contracts[tid], quote_type=sj.QuoteType.Tick, version=sj.QuoteVersion.v1)
         api.subscribe(contracts[tid], quote_type=sj.QuoteType.BidAsk, version=sj.QuoteVersion.v1)
-    
+
     @api.on_tick_stk_v1()
-    def STKtick_callback(exchange: Exchange, tick: TickSTKv1):
+    def STKtick_callback(tick: TickSTKv1):
         code = tick.code
         mutexDict[code].acquire()
         stockPrice[code] = float(tick.close)
         mutexDict[code].release()
-    api.quote.set_on_tick_stk_v1_callback(STKtick_callback)
 
     # 處理bidask即時資料更新的部分
     @api.on_bidask_stk_v1()
-    def STK_BidAsk_callback(exchange: Exchange, bidask: BidAskSTKv1):
+    def STK_BidAsk_callback(bidask: BidAskSTKv1):
         code = bidask.code
         mutexBidAskDict[code].acquire()
         bidlist = [float(i) for i in bidask.bid_price]
@@ -142,14 +141,12 @@ def GridbotBody(api):
         stockBid[code] = bidlist[0]
         stockAsk[code] = asklist[0]
         mutexBidAskDict[code].release()
-    api.quote.set_on_bidask_stk_v1_callback(STK_BidAsk_callback)
 
-    @api.quote.on_event
+    @api.on_event()
     def event_callback(resp_code: int, event_code: int, info: str, event: str):
-        # t = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")        
+        # t = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         logging.info(f'Event code: {event_code} | Event: {event}')
         # print(f'Event code: {event_code} | Event: {event}')
-    api.quote.set_event_callback(event_callback)
 
     # 用來更新買賣訊號和下單的迴圈
     try:
@@ -243,7 +240,6 @@ def main():
     api.login(
         api_key=os.environ["SJ_API_KEY"],
         secret_key=os.environ["SJ_SEC_KEY"],
-        fetch_contract=True,
     )
     if production:
         SJ_CA_PATH = "Sinopac.pfx"

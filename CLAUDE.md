@@ -49,7 +49,7 @@ When I correct you, or you catch yourself making a mistake: before continuing, a
 ## Architecture
 
 **`src/sj_trading/gridbot_body.py`** — orchestration/entry point.
-- `main()`: creates the Shioaji client (`simulation=not production`), logs in with `fetch_contract=True` (needed so `api.Contracts.Stocks[...]` resolves), optionally activates the CA cert, calls `GridbotBody(api)`, then logs out.
+- `main()`: creates the Shioaji client (`simulation=not production`), logs in, optionally activates the CA cert, calls `GridbotBody(api)`, then logs out. Since shioaji 1.7.0, `login()` no longer takes `fetch_contract` (contracts self-manage — `api.Contracts.Stocks[...]` loads on-demand on first access, no explicit fetch needed).
 - `GridbotBody(api)`: snapshots the two tickers, restores prior cash balance from `money.json` (via `misc.read_json`, defaulting to 0 on first run), builds a `GridBot` instance, subscribes to tick/bidask quotes for both tickers (`api.subscribe(...)` — the modern non-deprecated form, not `api.quote.subscribe(...)`), then runs a loop that wakes every ~60s, acts every 3 minutes, and calls `bot1.updateOrder()`.
 - **The loop's exit condition is wall-clock time, not elapsed duration**: it breaks once `hour` is in `[14, 15]` and persists `bot1.money` to `money.json` first. It also cancels all open orders once between 13:00–13:20. This means the script is designed to be started once, in the morning, and left running until early afternoon — triggering it manually outside that window (e.g. via `workflow_dispatch` in the evening) will *not* hit the exit condition and it will keep looping until the CI job timeout instead.
 
