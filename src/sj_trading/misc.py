@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 import json
 import logging
+import math
 
 def write_json(filename, obj):
     try:
@@ -114,3 +115,17 @@ def add_N_Days(days: int, date=None) -> datetime.date:
     if date is None:
         date = datetime.today()
     return date + timedelta(days)
+
+
+def is_pnl_outlier(pnl_pct: float, stats: dict | None, threshold: float = 3.0) -> bool | None:
+    """True if pnl_pct is beyond `threshold` std devs from the backtested
+    daily-return distribution in `stats`. None means "no opinion" - stats
+    unavailable or too degenerate to judge, never treated as an outlier."""
+    if stats is None:
+        return None
+    std = stats["std_daily_return"]
+    if not std or math.isnan(std):
+        return None
+    mean = stats["mean_daily_return"]
+    z = abs((pnl_pct - mean) / std)
+    return z > threshold
