@@ -242,7 +242,7 @@ def write_stats(df: pd.DataFrame, params: dict, path: str = "backtest_stats.json
         "params": params,
     }
     with open(path, "w") as f:
-        json.dump(stats, f)
+        json.dump(stats, f, indent=2)
     return stats
 
 

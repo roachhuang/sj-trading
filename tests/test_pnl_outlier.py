@@ -47,3 +47,13 @@ def test_custom_threshold():
     # z = 2.0
     assert is_pnl_outlier(0.02, stats, threshold=1.5) is True
     assert is_pnl_outlier(0.02, stats, threshold=2.5) is False
+
+
+def test_missing_key_in_stats_returns_none():
+    stats = {"mean_daily_return": 0.001}  # std_daily_return missing
+    assert is_pnl_outlier(0.05, stats) is None
+
+
+def test_nan_mean_returns_none():
+    stats = {"mean_daily_return": float("nan"), "std_daily_return": 0.01}
+    assert is_pnl_outlier(0.05, stats) is None

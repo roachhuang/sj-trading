@@ -26,15 +26,19 @@ ENABLE_PREMARKET = False
 ans = ''
 
 
-def evaluate_daily_drift(realized: float, unrealized: float, totalcapital: float,
-                          fetch_ok: bool, stats: dict | None) -> bool | None:
+def evaluate_daily_drift(today_equity: float, prior_equity: float | None,
+                          stats: dict | None) -> bool | None:
     """Pure decision core for the end-of-day P&L drift check - no API calls,
-    so it's directly testable. None means 'skip, don't fail the job':
-    a failed data fetch or a zero capital base must never look like
-    drift."""
-    if not fetch_ok or not totalcapital:
+    so it's directly testable. None means 'skip, don't fail the job': a
+    missing/zero prior-day equity baseline must never look like drift.
+    Compares day-over-day mark-to-market equity change (matching the
+    backtest's eq.pct_change() units) rather than broker P&L flows, which
+    mix a daily flow (realized) with a cumulative level (unrealized) and
+    would false-trigger persistently once a held position has moved more
+    than the threshold cumulatively."""
+    if not prior_equity:
         return None
-    pnl_pct = (realized + unrealized) / totalcapital
+    pnl_pct = (today_equity - prior_equity) / prior_equity
     return misc.is_pnl_outlier(pnl_pct, stats)
 
 
@@ -77,6 +81,12 @@ def GridbotBody(api):
     except Exception as e:
         logging.warning(f"backtest_stats.json unavailable, skipping drift check: {e}")
         backtest_stats = None
+
+    try:
+        prior_equity = misc.read_json('equity_snapshot.json')
+    except Exception as e:
+        logging.warning(f"equity_snapshot.json unavailable, skipping drift check: {e}")
+        prior_equity = None
     # order_cb recomputes live_cash_right_now = start_cash + g_settlement on every
     # fill, so start_cash must hold the day's fixed opening balance (not itself
     # be updated) - live_cash_right_now is the one that moves.
@@ -93,9 +103,8 @@ def GridbotBody(api):
     # 更新Trigger大小,在資產很多的時候固定2000會有點少
     bot1.trigger = max(2000, totalcapital*0.005)
 
-    def log_daily_pnl():
+    def log_daily_pnl(today_equity):
         today = datetime.date.today().isoformat()
-        fetch_ok = True
         try:
             realized_list = api.list_profit_loss(
                 api.stock_account, begin_date=today, end_date=today, unit=sj.Unit.Share
@@ -104,7 +113,6 @@ def GridbotBody(api):
         except Exception as e:
             logging.error(f"list_profit_loss failed: {e}")
             realized = 0
-            fetch_ok = False
 
         try:
             positions = api.list_positions(api.stock_account, unit=sj.Unit.Share)
@@ -112,21 +120,24 @@ def GridbotBody(api):
         except Exception as e:
             logging.error(f"list_positions failed: {e}")
             unrealized = 0
-            fetch_ok = False
 
         logging.info(
             f"daily P&L (TICKERS): realized={realized:.2f}, unrealized={unrealized:.2f}, "
             f"total={realized + unrealized:.2f}"
         )
 
-        drift = evaluate_daily_drift(realized, unrealized, totalcapital, fetch_ok, backtest_stats)
-        if drift:
-            pnl_pct = (realized + unrealized) / totalcapital
-            mean, std = backtest_stats["mean_daily_return"], backtest_stats["std_daily_return"]
-            z = (pnl_pct - mean) / std
-            logging.error(
-                f"drift detected: pnl_pct={pnl_pct:.4f} mean={mean:.4f} std={std:.4f} z={z:.2f}"
-            )
+        try:
+            drift = evaluate_daily_drift(today_equity, prior_equity, backtest_stats)
+            if drift:
+                pnl_pct = (today_equity - prior_equity) / prior_equity
+                mean, std = backtest_stats["mean_daily_return"], backtest_stats["std_daily_return"]
+                z = (pnl_pct - mean) / std
+                logging.error(
+                    f"drift detected: pnl_pct={pnl_pct:.4f} mean={mean:.4f} std={std:.4f} z={z:.2f}"
+                )
+        except Exception as e:
+            logging.error(f"drift check failed, skipping: {e}")
+            drift = None
         return drift
 
     logging.info("starting cash for today's run: {:.2f}".format(bot1.live_cash_right_now))
@@ -208,9 +219,11 @@ def GridbotBody(api):
             # via the exchange - just persist and stop instead of looping
             # forever on `continue` until the CI job timeout kills it.
             if (hour >= 14):
-                drift_result = log_daily_pnl()
+                today_equity = bot1.live_cash_right_now + stock_value()
+                drift_result = log_daily_pnl(today_equity)
                 try:
                     misc.write_json("money.json", bot1.live_cash_right_now)
+                    misc.write_json("equity_snapshot.json", today_equity)
                 except Exception as e:
                     logging.error('jobs_per1min  Error Message B: ' + str(e))
                 break
@@ -219,8 +232,10 @@ def GridbotBody(api):
             if (hour == 13 and minute > 20):
                 try:
                     bot1.cancelOrders()
-                    drift_result = log_daily_pnl()
+                    today_equity = bot1.live_cash_right_now + stock_value()
+                    drift_result = log_daily_pnl(today_equity)
                     misc.write_json("money.json", bot1.live_cash_right_now)
+                    misc.write_json("equity_snapshot.json", today_equity)
                 except Exception as e:
                     logging.error('jobs_per1min  Error Message A: ' + str(e))
                 break
@@ -260,9 +275,11 @@ def GridbotBody(api):
             bot1.cancelOrders()
         except Exception as e:
             logging.error(f"cancelOrders failed on KeyboardInterrupt: {e}")
-        drift_result = log_daily_pnl()
+        today_equity = bot1.live_cash_right_now + stock_value()
+        drift_result = log_daily_pnl(today_equity)
         try:
             misc.write_json("money.json", bot1.live_cash_right_now)
+            misc.write_json("equity_snapshot.json", today_equity)
         except Exception as e:
             logging.error(f"write_json failed on KeyboardInterrupt: {e}")
         try:
