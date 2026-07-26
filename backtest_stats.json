@@ -1,0 +1,1 @@
+{"mean_daily_return": 0.0009936127705483062, "std_daily_return": 0.012973370124975885, "generated_at": "2026-07-26T05:34:13.525804+00:00", "params": {"BiasUpperLimit": 1.4, "UpperLimitPosition": 0.35, "BiasLowerLimit": 0.7, "LowerLimitPosition": 0.8, "BiasPeriod": 180}}
