@@ -10,7 +10,9 @@ sizing, and realistic transaction costs. Not wired into the live bot -
 this is an offline research tool for periodically re-checking whether the
 current `GridBot.parameters` are still reasonable.
 """
+import datetime
 import itertools
+import json
 import math
 import time
 
@@ -168,6 +170,8 @@ def backtest(df: pd.DataFrame, ratio: pd.Series, params: dict, init_capital: flo
         "sharpe": sharpe,
         "max_dd": max_dd,
         "n_days": len(eq),
+        "daily_mean": float(daily_ret.mean()),
+        "daily_std": float(daily_ret.std()),
     }
 
 
@@ -224,6 +228,24 @@ def validate_out_of_sample(df, params, train_frac=0.7):
     return train_res, test_res
 
 
+def write_stats(df: pd.DataFrame, params: dict, path: str = "backtest_stats.json") -> dict:
+    """Snapshots the backtested daily-return distribution for `params` to
+    `path`, in the shape misc.is_pnl_outlier's `stats` argument expects.
+    Run manually on the same cadence as re-tuning GridBot.parameters -
+    not invoked automatically by the live bot or CI."""
+    ratio = df["upper"] / df["lower"]
+    result = backtest(df, ratio, params)
+    stats = {
+        "mean_daily_return": result["daily_mean"],
+        "std_daily_return": result["daily_std"],
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "params": params,
+    }
+    with open(path, "w") as f:
+        json.dump(stats, f)
+    return stats
+
+
 if __name__ == "__main__":
     from sj_trading.gridbot import GridBot
 
@@ -261,3 +283,7 @@ if __name__ == "__main__":
 
     print("\n=== Buy & hold 50/50 ===")
     print(buy_and_hold(df))
+
+    print("\n=== Writing backtest_stats.json for live drift monitoring ===")
+    stats = write_stats(df, GridBot.parameters)
+    print(stats)
