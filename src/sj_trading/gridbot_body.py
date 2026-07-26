@@ -168,6 +168,19 @@ def GridbotBody(api):
             # 2.between 15 second to 45 second
             if (minute % 3 != 0):
                 continue
+            # Safety net: still running past the normal close-exit window below
+            # (late/manual start, crash-restart, clock skew). Market's already
+            # closed at 13:30 by this point, so there's nothing left to cancel
+            # via the exchange - just persist and stop instead of looping
+            # forever on `continue` until the CI job timeout kills it.
+            if (hour >= 14):
+                log_daily_pnl()
+                try:
+                    misc.write_json("money.json", bot1.live_cash_right_now)
+                except Exception as e:
+                    logging.error('jobs_per1min  Error Message B: ' + str(e))
+                break
+
             # cancel all orders 10m before mkt close
             if (hour == 13 and minute > 20):
                 try:
@@ -177,16 +190,11 @@ def GridbotBody(api):
                 except Exception as e:
                     logging.error('jobs_per1min  Error Message A: ' + str(e))
                 break
-                
-            # Two unrelated guards share this one flag:
-            # - hour<9 = premarket gate (pre-open call auction, before 9:00)
-            # - hour>13 = NOT premarket-related; hour 14/15 already broke out
-            #   above, so this only fires for hour>=16 - a safety net for
-            #   off-schedule runs (e.g. manual trigger at the wrong hour, or
-            #   TZ misconfig) that never hit the normal 14-15 exit, so it
-            #   doesn't blind-trade on stale prices late at night.
+
+            # premarket gate: skip trading before the 9:00 open (pre-open call
+            # auction) unless explicitly enabled
             if (not ENABLE_PREMARKET):
-                if (hour < 9 or (hour > 13)):
+                if (hour < 9):
                     continue
 
             # 處理成交價不在買賣價中間的狀況
