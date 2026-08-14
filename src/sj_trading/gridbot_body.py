@@ -92,6 +92,41 @@ def GridbotBody(api):
     # be updated) - live_cash_right_now is the one that moves.
     # 昨天剩下的 cash =今天可用的 cash
     bot1.live_cash_right_now = bot1.start_cash
+    # Seed the bot's prices from the opening snapshot so an explicit close can
+    # run before the quote subscriptions and normal rebalance loop start.
+    bot1.stockPrice.update(stockPrice)
+    bot1.stockBid.update(stockBid)
+    bot1.stockAsk.update(stockAsk)
+
+    take_profit = os.environ.get("SJ_TAKE_PROFIT", "false").lower() == "true"
+    if take_profit:
+        logging.warning("SJ_TAKE_PROFIT=true: closing 0052/00662 and stopping")
+        close_ok = bot1.close_positions()
+        positions_flat = close_ok and bot1.uppershare == 0 and bot1.lowershare == 0
+        deadline = time.monotonic() + 30
+        while close_ok and not positions_flat and time.monotonic() < deadline:
+            time.sleep(1)
+            if bot1.getPositions():
+                positions_flat = bot1.uppershare == 0 and bot1.lowershare == 0
+
+        if not positions_flat:
+            logging.error(
+                "take-profit incomplete: remaining shares 0052=%s 00662=%s",
+                bot1.uppershare,
+                bot1.lowershare,
+            )
+            bot1.cancelOrders()
+        else:
+            logging.info("take-profit complete: both pair positions are flat")
+
+        # order_cb updates live_cash_right_now for every fill; persist the
+        # resulting ledger even when only part of the close filled.
+        try:
+            misc.write_json("money.json", bot1.live_cash_right_now)
+        except Exception as e:
+            logging.error(f"take-profit money.json write failed: {e}")
+        return None
+
     # reads bot1.uppershare/lowershare fresh on each call - they change as
     # the bot trades through the day, so this must not be memoized.
     def stock_value():

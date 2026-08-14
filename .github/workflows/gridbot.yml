@@ -24,6 +24,13 @@ on:
         required: false
         default: false
         type: boolean
+      take_profit:
+        description: >-
+          Sell all 0052/00662 holdings once, then stop. Use only for an
+          intentional manual liquidation.
+        required: false
+        default: false
+        type: boolean
 
 # SJ_PRODUCTION=true below means every trigger (schedule or manual) places
 # real orders. Without this, a manual workflow_dispatch overlapping with a
@@ -51,6 +58,7 @@ jobs:
     timeout-minutes: 360
     env:
       SJ_PRODUCTION: "true"
+      SJ_TAKE_PROFIT: ${{ github.event.inputs.take_profit == 'true' }}
       # gridbot_body.py gates its trading loop on datetime.now() wall-clock
       # hours (act 09:00-13:30, cancel at 13:2x, exit at 14-15). Runners
       # default to UTC, which shifts those gates -8h: the exit window becomes

@@ -305,7 +305,26 @@ class GridBot:
         for tid in TICKERS:
             available = self._sendOneOrder(tid, targets[tid] - shares[tid], available)
 
-    def _sendOneOrder(self, symbol, qty, available):
+    def close_positions(self) -> bool:
+        """Submit sell orders for all currently-held bot positions.
+
+        This is intentionally separate from rebalancing: a close operation
+        must sell the exact current holdings, including small odd-lot
+        residuals, and must not calculate a new target that could buy again.
+        """
+        if not self.cancelOrders():
+            self.logging.error("close_positions: could not cancel existing orders")
+            return False
+        if not self.getPositions():
+            self.logging.error("close_positions: could not refresh positions")
+            return False
+
+        available = self.live_cash_right_now
+        for tid, shares in ((self.upperid, self.uppershare), (self.lowerid, self.lowershare)):
+            available = self._sendOneOrder(tid, -shares, available, ignore_trigger=True)
+        return True
+
+    def _sendOneOrder(self, symbol, qty, available, ignore_trigger=False):
         price = self.stockBid[symbol]
         if not price:
             self.logging.error(f"_sendOneOrder: stockBid[{symbol}] is 0/missing, skipping this leg")
@@ -313,7 +332,7 @@ class GridBot:
         if qty > 0 and available < price * qty:
             qty = max(int(available / price), 0)
         # trigger=NT$2000 as a preventative of commision.
-        if qty == 0 or abs(qty) * self.stockPrice[symbol] < self.trigger:
+        if qty == 0 or (not ignore_trigger and abs(qty) * self.stockPrice[symbol] < self.trigger):
             return available
 
         if qty > 0 and available <= price * qty:
