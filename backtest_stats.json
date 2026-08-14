@@ -1,1 +1,13 @@
-{"mean_daily_return": 0.0009936127705483062, "std_daily_return": 0.012973370124975885, "generated_at": "2026-07-26T05:34:13.525804+00:00", "params": {"BiasUpperLimit": 1.4, "UpperLimitPosition": 0.35, "BiasLowerLimit": 0.7, "LowerLimitPosition": 0.8, "BiasPeriod": 180}}
+{
+  "mean_daily_return": 0.0009873429468535738,
+  "std_daily_return": 0.01306941165578779,
+  "generated_at": "2026-08-14T10:01:41.638272+00:00",
+  "params": {
+    "BiasUpperLimit": 1.4,
+    "UpperLimitPosition": 0.35,
+    "BiasLowerLimit": 0.7,
+    "LowerLimitPosition": 0.8,
+    "BiasPeriod": 180
+  },
+  "execution_slippage_ticks": 1.0
+}

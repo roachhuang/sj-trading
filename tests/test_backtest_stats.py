@@ -8,7 +8,7 @@ import json
 import numpy as np
 import pandas as pd
 
-from sj_trading.backtest import backtest, write_stats
+from sj_trading.backtest import _fill_price, backtest, write_stats
 
 PARAMS = {
     "BiasUpperLimit": 1.4,
@@ -42,7 +42,14 @@ def test_write_stats_writes_expected_shape(tmp_path):
     path = tmp_path / "backtest_stats.json"
     stats = write_stats(df, PARAMS, path=str(path))
 
-    assert set(stats) == {"mean_daily_return", "std_daily_return", "generated_at", "params"}
+    assert set(stats) == {
+        "mean_daily_return",
+        "std_daily_return",
+        "generated_at",
+        "params",
+        "execution_slippage_ticks",
+    }
+    assert stats["execution_slippage_ticks"] == 1.0
     assert stats["params"] == PARAMS
 
     with open(path) as f:
@@ -60,3 +67,10 @@ def test_write_stats_matches_backtest_daily_stats(tmp_path):
 
     assert stats["mean_daily_return"] == direct["daily_mean"]
     assert stats["std_daily_return"] == direct["daily_std"]
+
+
+def test_fill_price_models_one_tick_each_side_and_zero_baseline():
+    assert _fill_price(100.0, "Buy", 1) == 100.1
+    assert _fill_price(100.0, "Sell", 1) == 99.9
+    assert _fill_price(100.0, "Buy", 0) == 100.0
+    assert _fill_price(100.0, "Sell", 0) == 100.0

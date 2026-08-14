@@ -22,6 +22,7 @@ class GridBot:
     TAX_RATE_STOCK = 0.003    # 一般股票證交稅
     TAX_RATE_ETF = 0.001      # ETF 證交稅
     MIN_FEE = 1               # odd lot 手續費最低限制
+    MAX_BUY_SPREAD_PCT = 0.005  # skip buys when 賣1 is more than 0.5% above 買1
 
     # Re-backtested 2016-2026 after fixing an unlabeled 1-for-7 split in
     # 0052's yfinance data (2025-11, see backtest.py's _adjust_split_defects)
@@ -277,11 +278,13 @@ class GridBot:
                     all_cancelled = False
         return all_cancelled
 
-    def createOrdObj(self, symbol, direction, qty, order_lot):
+    def createOrdObj(self, symbol, direction, qty, order_lot, price=None):
         # Common expects quantity in lots (1 lot = 1000 shares); IntradayOdd
         # expects raw shares. Caller passes whichever is correct per order_lot.
+        if price is None:
+            price = self._get_order_price(symbol, direction)
         return sj.StockOrder(
-            price=self.stockBid[symbol],
+            price=price,
             quantity=qty,
             action=direction,
             price_type=sj.StockPriceType.LMT,
@@ -289,6 +292,31 @@ class GridBot:
             order_lot=order_lot,
             account=self.api.stock_account,
         )
+
+    def _get_order_price(self, symbol, direction):
+        """Use 賣1 for buys and 買1 for sells, with a wide-spread buy guard."""
+        bid = self.stockBid.get(symbol)
+        if not bid or bid <= 0:
+            self.logging.error(f"_get_order_price: 買1 for {symbol} is 0/missing")
+            return None
+        if direction == "Sell":
+            return bid
+
+        ask = self.stockAsk.get(symbol)
+        if not ask or ask <= 0:
+            self.logging.error(f"_get_order_price: 賣1 for {symbol} is 0/missing")
+            return None
+        if ask < bid:
+            self.logging.error(f"_get_order_price: crossed book for {symbol}, 買1={bid}, 賣1={ask}")
+            return None
+        spread_pct = (ask - bid) / bid
+        if spread_pct > self.MAX_BUY_SPREAD_PCT:
+            self.logging.info(
+                f"skip buy for {symbol}: spread={spread_pct:.3%} exceeds "
+                f"{self.MAX_BUY_SPREAD_PCT:.3%}"
+            )
+            return None
+        return ask
 
     def sendOrders(self, target_share: tuple):
         shares = {self.upperid: self.uppershare, self.lowerid: self.lowershare}
@@ -325,9 +353,11 @@ class GridBot:
         return True
 
     def _sendOneOrder(self, symbol, qty, available, ignore_trigger=False):
-        price = self.stockBid[symbol]
-        if not price:
-            self.logging.error(f"_sendOneOrder: stockBid[{symbol}] is 0/missing, skipping this leg")
+        if qty == 0:
+            return available
+        direction = "Buy" if qty > 0 else "Sell"
+        price = self._get_order_price(symbol, direction)
+        if price is None:
             return available
         if qty > 0 and available < price * qty:
             qty = max(int(available / price), 0)
@@ -338,7 +368,6 @@ class GridBot:
         if qty > 0 and available <= price * qty:
             return available
 
-        direction = "Buy" if qty > 0 else "Sell"
         contract = self.api.contracts.get(symbol)
         # A target delta can exceed 999 shares (e.g. 3950) - IntradayOdd
         # orders only accept 0-999 shares, so anything >=1000 needs a
@@ -352,7 +381,13 @@ class GridBot:
         for order_lot, lot_qty in ((sj.StockOrderLot.Common, lots), (sj.StockOrderLot.IntradayOdd, remainder)):
             if lot_qty == 0:
                 continue
-            order = self.createOrdObj(symbol=symbol, direction=direction, qty=lot_qty, order_lot=order_lot)
+            order = self.createOrdObj(
+                symbol=symbol,
+                direction=direction,
+                qty=lot_qty,
+                order_lot=order_lot,
+                price=price,
+            )
             try:
                 trade_result = self.api.place_order(contract, order)
             except Exception as e:

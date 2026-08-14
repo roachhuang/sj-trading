@@ -24,11 +24,11 @@ def make_bot(positions):
     bot.stockBid.update({TICKERS[0]: 99.5, TICKERS[1]: 49.5})
     bot.stockAsk.update({TICKERS[0]: 100.5, TICKERS[1]: 50.5})
     bot.createOrdObj = MagicMock(
-        side_effect=lambda symbol, direction, qty, order_lot: SimpleNamespace(
+        side_effect=lambda symbol, direction, qty, order_lot, price=None: SimpleNamespace(
             action=direction,
             order_lot=order_lot,
             quantity=qty,
-            price=bot.stockBid[symbol],
+            price=price if price is not None else bot.stockBid[symbol],
         )
     )
     return bot, api
