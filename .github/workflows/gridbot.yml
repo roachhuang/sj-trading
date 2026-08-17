@@ -67,7 +67,7 @@ jobs:
       TZ: Asia/Taipei
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v5
       - run: uv sync
       # money.json (bot1.money) is a tracked file, not gitignored runtime
       # state -- checkout above already gives each run the balance the
