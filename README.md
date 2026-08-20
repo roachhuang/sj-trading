@@ -1,1 +1,4 @@
 run backtest manually every 6-12 months and update params on line 34 of gridbot.py w/ the new backtest_stats.json.
+
+source .venv/bin/activate or 
+. venv/bin/activate
