@@ -100,25 +100,32 @@ jobs:
           SJ_SEC_KEY: ${{ secrets.SJ_SEC_KEY }}
           SJ_CA_PASSWD: ${{ secrets.SJ_CA_PASSWD }}
           SJ_PERSON_ID: ${{ secrets.SJ_PERSON_ID }}
-      # gridbot_body.py rewrites money.json locally at its natural 14:00-15:00
-      # exit, on KeyboardInterrupt, or via the seed step above; commit that
-      # back so the next run's checkout picks it up. if: always() covers the
-      # seed-only path (gridbot_body didn't run) and normal-failure paths;
-      # a hard-cancelled job still can't reach this step, same limitation
-      # actions/cache had. The diff check makes a no-op run a no-op commit.
-      - name: Persist money.json
+      # gridbot_body.py rewrites money.json and equity_snapshot.json locally at
+      # its natural 14:00-15:00 exit, on KeyboardInterrupt, or via the seed
+      # step above; commit both back so the next run's checkout picks them up.
+      # equity_snapshot.json must be committed here too - it's the prior-day
+      # baseline for the drift check in evaluate_daily_drift(), and if it's
+      # never persisted, checkout keeps resetting to whatever value was last
+      # committed by hand, comparing every future day's equity against a
+      # stale baseline and false-triggering the drift alarm (sys.exit(1))
+      # forever regardless of actual P&L.
+      # if: always() covers the seed-only path (gridbot_body didn't run) and
+      # normal-failure paths; a hard-cancelled job still can't reach this
+      # step, same limitation actions/cache had. The diff check makes a
+      # no-op run a no-op commit.
+      - name: Persist money.json and equity_snapshot.json
         if: always()
         run: |
-          if ! git diff --quiet -- money.json; then
+          if ! git diff --quiet -- money.json equity_snapshot.json; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add money.json
-            git commit -m "Update money.json ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+            git add money.json equity_snapshot.json
+            git commit -m "Update money.json/equity_snapshot.json ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
             git fetch origin ${{ github.ref_name }}
             git rebase origin/${{ github.ref_name }}
             git push origin HEAD:${{ github.ref_name }}
           else
-            echo "money.json unchanged, nothing to commit"
+            echo "money.json/equity_snapshot.json unchanged, nothing to commit"
           fi
       # gridbot.log/shioaji.log only exist on the runner's local disk and are
       # otherwise lost once the job ends; upload them even on failure/timeout
