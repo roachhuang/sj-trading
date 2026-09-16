@@ -42,10 +42,12 @@ concurrency:
   group: gridbot-live-trading
   cancel-in-progress: false
 
-# Repo default is "Read repository contents and packages permissions"
-# (restricted). actions/upload-artifact needs write access under the
-# `actions` scope specifically, not `contents`. contents: write is needed
-# separately, for this workflow's own commit-back of money.json below.
+# contents: write is needed for this workflow's own commit-back of
+# money.json/equity_snapshot.json below. actions: write is NOT needed for
+# actions/upload-artifact: it authenticates via the auto-injected
+# ACTIONS_RUNTIME_TOKEN, not GITHUB_TOKEN, so no permissions: entry gates it
+# (see CLAUDE.md Lessons). Kept here only in case another step starts
+# needing the Actions API; harmless otherwise.
 permissions:
   contents: write
   actions: write
