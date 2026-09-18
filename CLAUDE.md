@@ -33,6 +33,7 @@ Read from `.env` (gitignored, not committed) or process env:
 | `SJ_API_KEY` / `SJ_SEC_KEY` | Shioaji login (always required) |
 | `SJ_PRODUCTION` | `"true"` switches to live trading + requires CA activation; anything else (default) stays in simulation |
 | `SJ_CA_PATH` / `SJ_CA_PASSWD` | Only read when `SJ_PRODUCTION=true`, to activate the CA cert for live orders |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Optional. Read by `notify.py`'s `send_telegram_message()` to push a Telegram message when a drift alert fires (see below). Missing/empty means it logs a warning and no-ops - never affects the trading job's own success/failure. |
 
 In CI (`.github/workflows/gridbot.yml`), `SJ_API_KEY`/`SJ_SEC_KEY` come from GitHub repo secrets and `SJ_PRODUCTION` is hardcoded to `"true"` (since 2026-07-12, `a3a852a`) — **scheduled runs place real live orders**, not simulated ones. The CA cert is written from the `SJ_CA_PFX_B64` secret each run.
 
@@ -88,7 +89,9 @@ When I correct you, or you catch yourself making a mistake: before continuing, a
 
 ## When a drift alert fires
 
-`gridbot.yml` exits non-zero and shows a failed run. Work through these in order — verify before concluding, cheapest/most-likely-cause first — rather than assuming the number is real:
+`gridbot.yml` exits non-zero and shows a failed run. Since 2026-09-18, if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` are configured, `log_daily_pnl()` also pushes a Telegram message via `notify.send_telegram_message()` (message built by the pure, directly-testable `_format_drift_message()`) with pnl_pct/z/regime/equity/realized+unrealized/positions - a head start on steps 1, 2, and 5 below, not a replacement for them. This is a notification only: it never decides anything or takes any trading action, and a failure to send (missing secret, Telegram API down) never affects the job's own success/failure - `gridbot.yml`'s exit code is still the authoritative signal, don't rely on the Telegram push alone reaching you.
+
+Work through these in order — verify before concluding, cheapest/most-likely-cause first — rather than assuming the number is real:
 
 1. **Pull the actual alert line.** Download the `gridbot-logs-<run_id>` artifact from that run, open `gridbot.log`, find `drift detected: pnl_pct=... mean=... std=... z=... regime=...`.
 2. **Check the inputs before trusting the number.** Cross-check `equity_snapshot.json`'s baseline against the previous day's `gridbot.log` `totalcapital:` line, not just the file's face value — this is exactly what went wrong on 2026-09-02 (see above). Confirm `backtest_stats.json` matches the currently-live `GridBot.parameters` (it should auto-refresh via `retune.py`, but verify).

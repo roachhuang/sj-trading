@@ -16,6 +16,7 @@ import os
 from dotenv import load_dotenv
 import sj_trading.misc as misc
 import sj_trading.gridbot as gridbot
+import sj_trading.notify as notify
 
 load_dotenv()
 
@@ -40,6 +41,25 @@ def evaluate_daily_drift(today_equity: float, prior_equity: float | None,
         return None
     pnl_pct = (today_equity - prior_equity) / prior_equity
     return misc.is_pnl_outlier(pnl_pct, stats)
+
+
+def _format_drift_message(*, today, pnl_pct, z, regime, today_equity, prior_equity,
+                           realized, unrealized, uppershare, lowershare) -> str:
+    """Pure formatter - no API calls, no Telegram - so message content is
+    testable without mocking send_telegram_message's HTTP call. Packages
+    the same facts CLAUDE.md's drift-alert checklist has a human go dig up
+    by hand (steps 1/2/5), so the Telegram push doubles as a head start on
+    that checklist rather than just a bare number."""
+    return (
+        f"sj-trading drift alert ({today})\n"
+        f"pnl_pct={pnl_pct:.2%}  z={z:.2f}  regime={regime}\n"
+        f"today_equity={today_equity:.2f}  prior_equity={prior_equity:.2f}\n"
+        f"realized={realized:.2f}  unrealized={unrealized:.2f}\n"
+        f"positions: 0052={uppershare}  00662={lowershare}\n"
+        f"Don't assume real loss - check equity_snapshot.json's baseline "
+        f"and TWSE's actual close before acting. See CLAUDE.md \"When a "
+        f"drift alert fires\"."
+    )
 
 
 def GridbotBody(api):
@@ -185,6 +205,12 @@ def GridbotBody(api):
                     f"drift detected: pnl_pct={pnl_pct:.4f} mean={mean:.4f} std={std:.4f} "
                     f"z={z:.2f} regime={regime}"
                 )
+                notify.send_telegram_message(_format_drift_message(
+                    today=today, pnl_pct=pnl_pct, z=z, regime=regime,
+                    today_equity=today_equity, prior_equity=prior_equity,
+                    realized=realized, unrealized=unrealized,
+                    uppershare=bot1.uppershare, lowershare=bot1.lowershare,
+                ))
         except Exception as e:
             logging.error(f"drift check failed, skipping: {e}")
             drift = None

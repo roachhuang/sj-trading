@@ -102,6 +102,11 @@ jobs:
           SJ_SEC_KEY: ${{ secrets.SJ_SEC_KEY }}
           SJ_CA_PASSWD: ${{ secrets.SJ_CA_PASSWD }}
           SJ_PERSON_ID: ${{ secrets.SJ_PERSON_ID }}
+          # Optional - drift-alert push notification (notify.py). If unset,
+          # send_telegram_message() logs a warning and no-ops; the trading
+          # job's own success/failure is never affected either way.
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       # gridbot_body.py rewrites money.json and equity_snapshot.json locally at
       # its natural 14:00-15:00 exit, on KeyboardInterrupt, or via the seed
       # step above; commit both back so the next run's checkout picks them up.
