@@ -218,8 +218,16 @@ class GridBot:
         """
         MA = self.MA
         if not MA or math.isnan(MA):
-            self.logging.error("calculateGrid: MA is 0/NaN, falling back to no-op shareTarget")
-            return self.parameters["LowerLimitPosition"]
+            # Previously returned parameters["LowerLimitPosition"] as a
+            # claimed "no-op" fallback - that's actually the MAXIMUM
+            # possible allocation toward the upper ticker (the top of
+            # shareTarget's clamped range), so a stale/NaN MA (e.g. a
+            # yfinance blip) was driving an aggressive rebalance instead of
+            # doing nothing. Raising here is a genuine no-op: updateOrder()
+            # wraps this call in try/except and skips the whole cycle
+            # without sending any orders, exactly like its cancelOrders()/
+            # getPositions() failure guards just above it.
+            raise ValueError("calculateGrid: MA is 0/NaN")
         # 計算目標部位百分比
         BiasUpperLimit = self.parameters["BiasUpperLimit"]
         UpperLimitPosition = self.parameters["UpperLimitPosition"]

@@ -48,16 +48,13 @@ def GridbotBody(api):
     # 成交價
     snaprice = {tid: api.snapshots([contracts[tid]]) for tid in TICKERS}
     stockPrice = {tid: snaprice[tid][0]['close'] for tid in TICKERS}
-    # 最高買價
-    stockBid = {tid: snaprice[tid][0]['close'] for tid in TICKERS}
+    # 最高買價 - real bid/ask, not `close`, so the SJ_TAKE_PROFIT path (which
+    # runs and returns before api.subscribe()'s on_bidask_stk_v1 callback is
+    # ever registered further below) prices its liquidation orders off an
+    # actual quote instead of a stale last-trade price with zero spread.
+    stockBid = {tid: snaprice[tid][0]['buy_price'] for tid in TICKERS}
     # 最低賣價
-    stockAsk = {tid: snaprice[tid][0]['close'] for tid in TICKERS}
-    # # 最高買價
-    # stockBid = {g_upperid: snaprice[g_upperid][0]['buy_price'],
-    #             g_lowerid: snaprice[g_lowerid][0]['buy_price']}
-    # # 最低賣價
-    # stockAsk = {g_upperid: snaprice[g_upperid][0]['sell_price'],
-    #             g_lowerid: snaprice[g_lowerid][0]['sell_price']}
+    stockAsk = {tid: snaprice[tid][0]['sell_price'] for tid in TICKERS}
 
     # 創建交易機器人物件
     # logging.basicConfig(filename='gridbotlog.log', level=logging.DEBUG)
@@ -125,7 +122,12 @@ def GridbotBody(api):
             misc.write_json("money.json", bot1.live_cash_right_now)
         except Exception as e:
             logging.error(f"take-profit money.json write failed: {e}")
-        return None
+        # Truthy (not positions_flat) here reuses main()'s existing
+        # `if job_failed: sys.exit(1)` to fail the CI job when the
+        # liquidation didn't actually complete - previously this always
+        # returned None, so an incomplete take-profit only logged an error
+        # and the run still reported success.
+        return not positions_flat
 
     # reads bot1.uppershare/lowershare fresh on each call - they change as
     # the bot trades through the day, so this must not be memoized.
@@ -362,7 +364,10 @@ def main():
         print(api.usage())
 
     # starting point of the code running
-    drift_result = GridbotBody(api)
+    # Truthy means either a P&L drift alert fired, or (SJ_TAKE_PROFIT path)
+    # the liquidation didn't fully complete - both are failures worth a
+    # non-zero exit so the GitHub Actions run doesn't silently report success.
+    job_failed = GridbotBody(api)
 
     # GridbotBody returns once its internal loop reaches ~14:00-15:00.
     # Log out and exit here so a scheduled run (e.g. triggered once per
@@ -373,7 +378,7 @@ def main():
     except Exception as e:
         logging.error(f"failed to call api.logout: {e}")
 
-    if drift_result:
+    if job_failed:
         sys.exit(1)
 
 if __name__ == '__main__':

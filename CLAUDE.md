@@ -9,6 +9,8 @@ A grid-trading bot for Taiwan-listed ETFs (0052 / 00662) built on SinoPac's **Sh
 ## Trading Bot Safety
 - When writing cancel/close order scripts, ALWAYS filter to the specific target tickers (e.g., 0052, 00662) — never operate on account-wide orders.
 - Before trusting a 'bug' in position/order data, verify the diagnostic script itself is correct.
+- A code path's early-return/failure branch that's supposed to fail the CI job (return something truthy so `main()`'s `if job_failed: sys.exit(1)` fires) must actually be checked, not assumed — `GridbotBody`'s `SJ_TAKE_PROFIT` path `return None`'d unconditionally until 2026-09-18, so an incomplete emergency liquidation only logged an error and the run still reported success. Fixed: `return not positions_flat`.
+- A fallback value's comment claiming "no-op"/neutral behavior must be checked against what the value actually does, not trusted at face value — `calculateGrid()`'s MA-is-NaN fallback returned `parameters["LowerLimitPosition"]` (0.80) labeled "no-op" until 2026-09-18, but that's the *maximum* possible allocation toward the upper ticker, so a yfinance blip would've driven an aggressive rebalance instead of skipping the cycle. Fixed by raising instead, letting `updateOrder()`'s existing try/except skip the cycle like its other failure guards do.
 
 ## Commands
 
