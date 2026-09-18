@@ -120,16 +120,27 @@ def add_N_Days(days: int, date=None) -> datetime.date:
 
 
 def blended_price(upper_close: pd.Series, lower_close: pd.Series) -> pd.Series:
-    """50/50 blended price index from two tickers' closes, each normalized
-    to 1.0 at the start of the given series - used as a market-direction
-    proxy (regime labeling) distinct from GridBot's upper/lower bias ratio,
-    which drives allocation between the two ETFs rather than indicating
-    overall market direction. Shared by backtest.py's offline regime
-    breakdown and gridbot_body.py's live drift-alert annotation so both use
-    the identical definition."""
+    """50/50 blended price index from two tickers' closes, built by
+    compounding each day's weighted daily return (0.5*upper_return +
+    0.5*lower_return) rather than normalizing both series to a single fixed
+    anchor date. Anchor-date normalization (dividing by each series'
+    iloc[0]) makes any rolling-window return computed off the result depend
+    on how much history happened to be loaded - since 0052/00662 have grown
+    at different total rates, backtest.py's full-history anchor and
+    gridbot_body.py's 2-year live fetch anchor would bake in different
+    50/50 *dollar* weights and could label the identical calendar date
+    differently even given identical underlying prices. Compounding daily
+    returns instead makes any window-return computed off this series depend
+    only on the prices within that window, regardless of series start date
+    - required for label_regimes() to agree between backtest and live.
+    Used as a market-direction proxy (regime labeling) distinct from
+    GridBot's upper/lower bias ratio, which drives allocation between the
+    two ETFs rather than indicating overall market direction."""
     aligned = pd.concat([upper_close, lower_close], axis=1, join="inner")
-    u, l = aligned.iloc[:, 0], aligned.iloc[:, 1]
-    return 0.5 * u / u.iloc[0] + 0.5 * l / l.iloc[0]
+    u_ret = aligned.iloc[:, 0].pct_change()
+    l_ret = aligned.iloc[:, 1].pct_change()
+    blended_ret = (0.5 * u_ret + 0.5 * l_ret).fillna(0)
+    return (1 + blended_ret).cumprod()
 
 
 def label_regimes(price: pd.Series, window: int = 20, threshold: float = 0.02) -> pd.Series:

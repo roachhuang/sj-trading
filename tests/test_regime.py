@@ -66,17 +66,34 @@ def test_backtest_by_regime_raises_on_insufficient_history():
         backtest_by_regime(df, PARAMS)
 
 
-def test_blended_price_normalizes_each_series_to_its_own_start():
-    dates = pd.date_range("2020-01-01", periods=5, freq="B")
-    upper = pd.Series([100.0, 110.0, 121.0, 100.0, 100.0], index=dates)
-    lower = pd.Series([50.0, 50.0, 50.0, 55.0, 50.0], index=dates)
+def test_blended_price_compounds_daily_returns():
+    dates = pd.date_range("2020-01-01", periods=3, freq="B")
+    upper = pd.Series([100.0, 110.0, 121.0], index=dates)  # +10%, +10%
+    lower = pd.Series([50.0, 50.0, 50.0], index=dates)  # flat
 
     blended = blended_price(upper, lower)
     assert blended.iloc[0] == pytest.approx(1.0)
-    # up 10% / flat -> blended up ~5%
-    assert blended.iloc[1] == pytest.approx(1.05)
-    # flat / up 10% -> blended up ~5%
-    assert blended.iloc[3] == pytest.approx(0.5 * 1.0 + 0.5 * 1.1)
+    assert blended.iloc[1] == pytest.approx(1.05)  # 0.5*10% + 0.5*0%
+    assert blended.iloc[2] == pytest.approx(1.05 * 1.05)
+
+
+def test_blended_price_window_return_is_anchor_invariant():
+    """The bug this guards against: normalizing each series to iloc[0]
+    made a window-return depend on how much history was loaded, so
+    backtest.py's full-history anchor and gridbot_body.py's 2-year live
+    fetch could label the identical calendar date differently even given
+    identical prices for the window that matters."""
+    rng = np.random.default_rng(1)
+    dates = pd.date_range("2020-01-01", periods=120, freq="B")
+    upper = pd.Series(100 * np.cumprod(1 + rng.normal(0.001, 0.01, 120)), index=dates)
+    lower = pd.Series(50 * np.cumprod(1 + rng.normal(-0.001, 0.008, 120)), index=dates)
+
+    full_label = label_regimes(blended_price(upper, lower), window=20).iloc[-1]
+    # Same tail data, different amount of history loaded before it.
+    truncated_label = label_regimes(
+        blended_price(upper.iloc[50:], lower.iloc[50:]), window=20
+    ).iloc[-1]
+    assert full_label == truncated_label
 
 
 def test_blended_price_aligns_mismatched_indices():
