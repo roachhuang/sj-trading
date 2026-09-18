@@ -22,7 +22,7 @@ import pandas as pd
 import yfinance as yf
 
 from sj_trading.gridbot import TICKERS
-from sj_trading.misc import get_tick_unit
+from sj_trading.misc import blended_price, get_tick_unit, label_regimes
 
 UPPER, LOWER = TICKERS
 
@@ -97,6 +97,7 @@ def backtest(
     params: dict,
     init_capital: float = 100_000.0,
     slippage_ticks: float = DEFAULT_SLIPPAGE_TICKS,
+    return_daily: bool = False,
 ):
     """Returns None if there isn't enough history for a meaningful sample."""
     bias_upper = params["BiasUpperLimit"]
@@ -193,7 +194,7 @@ def backtest(
     ann_vol = daily_ret.std() * np.sqrt(252)
     sharpe = ann_return / ann_vol if ann_vol > 0 else np.nan
     max_dd = (eq / eq.cummax() - 1).min()
-    return {
+    result = {
         "total_return": total_return,
         "ann_return": ann_return,
         "ann_vol": ann_vol,
@@ -204,6 +205,9 @@ def backtest(
         "daily_std": float(daily_ret.std()),
         "slippage_ticks": slippage_ticks,
     }
+    if return_daily:
+        result["daily_returns"] = daily_ret
+    return result
 
 
 def buy_and_hold(df: pd.DataFrame):
@@ -306,6 +310,48 @@ def write_stats(
     return stats
 
 
+def backtest_by_regime(
+    df: pd.DataFrame,
+    params: dict,
+    window: int = 20,
+    threshold: float = 0.02,
+    slippage_ticks: float = DEFAULT_SLIPPAGE_TICKS,
+) -> pd.DataFrame:
+    """Splits the strategy's daily returns by market regime and reports
+    Sharpe per regime, to check whether backtested performance is uniform
+    or concentrated in one regime (e.g. the 2021-07..2023-04 rate-hike bear
+    market backtested near-flat, Sharpe ~0.10, vs 1.5-2.7 elsewhere).
+
+    Regime is labeled off the buy&hold 50/50 blended price (overall market
+    direction), not the strategy's upper/lower bias ratio - the ratio
+    drives *allocation* between the two ETFs, it isn't a market-direction
+    signal."""
+    ratio = df["upper"] / df["lower"]
+    result = backtest(df, ratio, params, slippage_ticks=slippage_ticks, return_daily=True)
+    if result is None:
+        raise ValueError("backtest returned None - not enough history for these params")
+    daily_ret = result["daily_returns"]
+
+    blended = blended_price(df["upper"], df["lower"])
+    regime = label_regimes(blended, window=window, threshold=threshold).reindex(daily_ret.index)
+
+    rows = []
+    for label in ("Bull", "Bear", "Sideways"):
+        r = daily_ret[regime == label]
+        if len(r) < 10:
+            rows.append(
+                {"regime": label, "n_days": len(r), "ann_return": np.nan, "sharpe": np.nan}
+            )
+            continue
+        ann_return = (1 + r).prod() ** (252 / len(r)) - 1
+        ann_vol = r.std() * np.sqrt(252)
+        sharpe = ann_return / ann_vol if ann_vol > 0 else np.nan
+        rows.append(
+            {"regime": label, "n_days": len(r), "ann_return": ann_return, "sharpe": sharpe}
+        )
+    return pd.DataFrame(rows)
+
+
 if __name__ == "__main__":
     from sj_trading.gridbot import GridBot
 
@@ -343,6 +389,9 @@ if __name__ == "__main__":
 
     print("\n=== Buy & hold 50/50 ===")
     print(buy_and_hold(df))
+
+    print("\n=== Current production parameters by market regime ===")
+    print(backtest_by_regime(df, GridBot.parameters).to_string(index=False))
 
     print("\n=== Writing backtest_stats.json for live drift monitoring ===")
     stats = write_stats(df, GridBot.parameters)

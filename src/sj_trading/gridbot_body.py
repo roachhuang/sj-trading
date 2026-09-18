@@ -167,8 +167,21 @@ def GridbotBody(api):
                 pnl_pct = (today_equity - prior_equity) / prior_equity
                 mean, std = backtest_stats["mean_daily_return"], backtest_stats["std_daily_return"]
                 z = (pnl_pct - mean) / std
+                # Annotation only - regime is NOT used to gate/suppress this
+                # alert. See CLAUDE.md: the classifier isn't validated enough
+                # yet to trust it silencing a real bug, so a human reading
+                # this log still decides whether the drift is regime-driven
+                # or a real problem.
+                regime = "unknown"
+                try:
+                    if bot1.upper_close is not None and bot1.lower_close is not None:
+                        blended = misc.blended_price(bot1.upper_close, bot1.lower_close)
+                        regime = misc.label_regimes(blended).iloc[-1]
+                except Exception as e:
+                    logging.error(f"regime annotation failed: {e}")
                 logging.error(
-                    f"drift detected: pnl_pct={pnl_pct:.4f} mean={mean:.4f} std={std:.4f} z={z:.2f}"
+                    f"drift detected: pnl_pct={pnl_pct:.4f} mean={mean:.4f} std={std:.4f} "
+                    f"z={z:.2f} regime={regime}"
                 )
         except Exception as e:
             logging.error(f"drift check failed, skipping: {e}")

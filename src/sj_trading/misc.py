@@ -3,6 +3,8 @@ import json
 import logging
 import math
 
+import pandas as pd
+
 def write_json(filename, obj):
     try:
         with open(filename, "w") as handle:
@@ -115,6 +117,30 @@ def add_N_Days(days: int, date=None) -> datetime.date:
     if date is None:
         date = datetime.today()
     return date + timedelta(days)
+
+
+def blended_price(upper_close: pd.Series, lower_close: pd.Series) -> pd.Series:
+    """50/50 blended price index from two tickers' closes, each normalized
+    to 1.0 at the start of the given series - used as a market-direction
+    proxy (regime labeling) distinct from GridBot's upper/lower bias ratio,
+    which drives allocation between the two ETFs rather than indicating
+    overall market direction. Shared by backtest.py's offline regime
+    breakdown and gridbot_body.py's live drift-alert annotation so both use
+    the identical definition."""
+    aligned = pd.concat([upper_close, lower_close], axis=1, join="inner")
+    u, l = aligned.iloc[:, 0], aligned.iloc[:, 1]
+    return 0.5 * u / u.iloc[0] + 0.5 * l / l.iloc[0]
+
+
+def label_regimes(price: pd.Series, window: int = 20, threshold: float = 0.02) -> pd.Series:
+    """Bull/Bear/Sideways from a window-day rolling return, thresholded.
+    Same convention as the markov-hedge-fund-method skill's regime.py
+    (20-day window, +-2% threshold) for consistency across projects."""
+    rolling_return = price.pct_change(window)
+    labels = pd.Series("Sideways", index=price.index)
+    labels[rolling_return > threshold] = "Bull"
+    labels[rolling_return < -threshold] = "Bear"
+    return labels
 
 
 def is_pnl_outlier(pnl_pct: float, stats: dict | None, threshold: float = 3.0) -> bool | None:

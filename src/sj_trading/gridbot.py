@@ -61,6 +61,9 @@ class GridBot:
         self.stockAsk = {}
         self.start_cash = self.g_settlement = 0
         self.upperid, self.lowerid = TICKERS
+        # Populated by UpdateMA(); stay None until the first successful
+        # fetch (e.g. a crash-restart exiting before updateOrder() ever ran).
+        self.upper_close = self.lower_close = None
         self.live_cash_right_now = self.uppershare = self.lowershare = 0
         self.api = api
         self.logging = logging
@@ -148,8 +151,12 @@ class GridBot:
                     lower_hist = lower.history(period="2y")
                     lower_close = self._truncate_at_bad_data(lower_hist["Close"])
                     close = (upper_close / lower_close).dropna()
+                    # Kept for gridbot_body.py's drift-alert regime annotation
+                    # (misc.blended_price/label_regimes) - not used by MA math.
+                    self.upper_close, self.lower_close = upper_close, lower_close
                 else:
                     close = upper_close.dropna()
+                    self.upper_close = self.lower_close = None
                 self.MA = close[-period:].mean()
                 self.year = now.year
                 self.month = now.month
