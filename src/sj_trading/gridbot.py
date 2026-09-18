@@ -31,6 +31,14 @@ class GridBot:
     # data - the previous params' apparent large edge over buy&hold was
     # partly an artifact of that bad data. Position bounds kept away from
     # 0/1 so this stays a genuine two-asset grid rather than an on/off switch.
+    #
+    # retune.py's apply_params() rewrites the AUTO-RETUNE block below (the
+    # metrics comment + parameters dict) every quarterly cron run - see
+    # .github/workflows/retune.yml. Manual edits inside it survive only
+    # until the next scheduled run; if a manual value needs to stick, also
+    # update backtest_stats.json (see write_stats()) so the drift check's
+    # baseline matches.
+    # AUTO-RETUNE:START
     parameters = {
         "BiasUpperLimit": 1.4,
         "UpperLimitPosition": 0.35,
@@ -38,6 +46,7 @@ class GridBot:
         "LowerLimitPosition": 0.80,
         "BiasPeriod": 180,
     }
+    # AUTO-RETUNE:END
 
     def __init__(self, api: sj.Shioaji, logging):
         # keep track of MA calulated date

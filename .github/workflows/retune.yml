@@ -1,0 +1,44 @@
+name: Quarterly Grid Re-tune
+
+on:
+  schedule:
+    # 00:17 UTC on the 1st of Jan/Apr/Jul/Oct - quarterly, off the
+    # top-of-hour mark deliberately (see gridbot.yml's cron comment for why).
+    - cron: '17 0 1 1,4,7,10 *'
+  workflow_dispatch: {}
+
+# contents: write is needed for this workflow's commit-back of gridbot.py
+# and backtest_stats.json below.
+permissions:
+  contents: write
+
+jobs:
+  retune:
+    runs-on: ubuntu-latest
+    # grid_search runs a few thousand backtests; generous but bounded.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - run: uv run python -m sj_trading.retune
+      # retune.py either rewrites GridBot.parameters in gridbot.py (when the
+      # new candidate clears its out-of-sample Sharpe floor) or leaves it
+      # untouched; backtest_stats.json is refreshed either way. This commits
+      # straight to master with no human review gate - see retune.py's
+      # MIN_TEST_SHARPE for the only safety check before a param change
+      # reaches the live bot on its next scheduled gridbot.yml run.
+      - name: Commit updated parameters
+        if: always()
+        run: |
+          if ! git diff --quiet -- src/sj_trading/gridbot.py backtest_stats.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add src/sj_trading/gridbot.py backtest_stats.json
+            git commit -m "Quarterly re-tune: update GridBot.parameters/backtest_stats.json ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+            git fetch origin ${{ github.ref_name }}
+            git rebase origin/${{ github.ref_name }}
+            git push origin HEAD:${{ github.ref_name }}
+          else
+            echo "no parameter change, nothing to commit"
+          fi
