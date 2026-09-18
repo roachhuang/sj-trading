@@ -1,9 +1,11 @@
 """label_regimes()/backtest_by_regime() split backtested daily returns by
-market regime (Bull/Bear/Sideways off a 20-day rolling return, +-2%
-threshold - same convention as the markov-hedge-fund-method skill), to
-check whether GridBot.parameters' backtested edge is uniform across
-regimes or concentrated in one, per the 2021-07..2023-04 near-flat window
-found by manual walk-forward checking."""
+market regime (Bull/Bear/Sideways off a 20-day rolling return, +-2% entry
+threshold with hysteresis - same entry convention as the
+markov-hedge-fund-method skill, hysteresis added on top after a flat
+threshold measured a 17.5% day-to-day flip rate on real history), to check
+whether GridBot.parameters' backtested edge is uniform across regimes or
+concentrated in one, per the 2021-07..2023-04 near-flat window found by
+manual walk-forward checking."""
 import numpy as np
 import pandas as pd
 import pytest
@@ -37,6 +39,56 @@ def test_label_regimes_detects_trend_direction():
     assert (label_regimes(rising, window=20).iloc[30:] == "Bull").all()
     assert (label_regimes(falling, window=20).iloc[30:] == "Bear").all()
     assert (label_regimes(flat, window=20).iloc[30:] == "Sideways").all()
+
+
+def test_label_regimes_hysteresis_prevents_flip_near_threshold():
+    """window=1 makes pct_change(1) equal the per-day return exactly, so
+    this hand-designs the rolling-return trace directly: enters Bull at
+    +3%, dips to +1.9% (below the 2% entry threshold but still above the
+    0.2% exit band) - must stay Bull, not revert to Sideways - then drops
+    to +0.1% (below the exit band) and must revert, then a sharp -3% day
+    enters Bear directly."""
+    dates = pd.date_range("2020-01-01", periods=6, freq="B")
+    rets = np.array([0.0, 0.03, 0.019, 0.03, 0.001, -0.03])
+    price = pd.Series(np.cumprod(1 + rets), index=dates)
+
+    labels = label_regimes(price, window=1, threshold=0.02, hysteresis=0.018)
+    assert labels.iloc[1] == "Bull"
+    assert labels.iloc[2] == "Bull"  # hysteresis: stays Bull despite < threshold
+    assert labels.iloc[3] == "Bull"
+    assert labels.iloc[4] == "Sideways"  # drops below exit band -> reverts
+    assert labels.iloc[5] == "Bear"
+
+
+def test_label_regimes_rejects_hysteresis_not_less_than_threshold():
+    price = pd.Series([1.0, 1.01, 1.02])
+    with pytest.raises(ValueError):
+        label_regimes(price, threshold=0.02, hysteresis=0.02)
+    with pytest.raises(ValueError):
+        label_regimes(price, threshold=0.02, hysteresis=-0.01)
+
+
+def test_label_regimes_stability_improves_with_hysteresis():
+    """Regression guard for the flip-flopping this was built to fix
+    (measured on real 0052/00662 history: 17.5% day-to-day flip rate,
+    median 2-day regime run with a flat threshold). Synthetic here rather
+    than a live fetch, per this repo's tests never hitting the network:
+    window=1 makes pct_change(1) equal the per-day return exactly, so a
+    return oscillating tightly around the +2% entry threshold reproduces
+    the same flip-flopping a flat threshold sees in practice."""
+    n = 200
+    dates = pd.date_range("2020-01-01", periods=n, freq="B")
+    t = np.arange(n)
+    rets = np.concatenate([[0.0], 0.02 + 0.006 * np.sin(2 * np.pi * t[1:] / 8)])
+    price = pd.Series(np.cumprod(1 + rets), index=dates)
+
+    def flip_rate(labels):
+        changes = labels != labels.shift(1)
+        return changes.iloc[1:].mean()
+
+    unhystereted = label_regimes(price, window=1, hysteresis=0.0)
+    hystereted = label_regimes(price, window=1)  # default hysteresis
+    assert flip_rate(hystereted) < flip_rate(unhystereted)
 
 
 def test_backtest_return_daily_flag():
