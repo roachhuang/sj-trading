@@ -39,12 +39,16 @@ class GridBot:
     # update backtest_stats.json (see write_stats()) so the drift check's
     # baseline matches.
     # AUTO-RETUNE:START
+    # Auto-retuned by retune.py (2026-10-01). In-sample Sharpe
+    # 0.91, out-of-sample Sharpe 1.71
+    # (floor: 0.5). See backtest_stats.json for the full
+    # snapshot.
     parameters = {
         "BiasUpperLimit": 1.4,
         "UpperLimitPosition": 0.35,
-        "BiasLowerLimit": 0.70,
-        "LowerLimitPosition": 0.80,
-        "BiasPeriod": 180,
+        "BiasLowerLimit": 0.95,
+        "LowerLimitPosition": 0.7,
+        "BiasPeriod": 150,
     }
     # AUTO-RETUNE:END
 

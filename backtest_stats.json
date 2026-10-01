@@ -1,13 +1,13 @@
 {
-  "mean_daily_return": 0.0009873429468535738,
-  "std_daily_return": 0.01306941165578779,
-  "generated_at": "2026-08-14T10:01:41.638272+00:00",
+  "mean_daily_return": 0.001003569315836858,
+  "std_daily_return": 0.013144180119856923,
+  "generated_at": "2026-10-01T05:50:05.338500+00:00",
   "params": {
     "BiasUpperLimit": 1.4,
     "UpperLimitPosition": 0.35,
-    "BiasLowerLimit": 0.7,
-    "LowerLimitPosition": 0.8,
-    "BiasPeriod": 180
+    "BiasLowerLimit": 0.95,
+    "LowerLimitPosition": 0.7,
+    "BiasPeriod": 150
   },
   "execution_slippage_ticks": 1.0
 }
