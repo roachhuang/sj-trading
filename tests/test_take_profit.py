@@ -153,3 +153,52 @@ def test_gridbot_body_take_profit_returns_truthy_when_positions_remain(monkeypat
     result = GridbotBody(api)
 
     assert result
+
+
+def test_seconds_until_open_waits_before_open_and_zero_after():
+    import datetime
+    early = datetime.datetime(2026, 10, 15, 7, 23, 0)
+    assert gridbot_body.seconds_until_open(early) == (1 * 3600 + 42 * 60)
+    assert gridbot_body.seconds_until_open(datetime.datetime(2026, 10, 15, 9, 5, 0)) == 0
+    assert gridbot_body.seconds_until_open(datetime.datetime(2026, 10, 15, 11, 0, 0)) == 0
+
+
+def test_take_profit_waits_for_open_then_reprices_from_fresh_snapshot(monkeypatch, tmp_path):
+    import datetime
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SJ_TAKE_PROFIT", "true")
+    monkeypatch.setattr(GridBot, "createOrdObj", fake_create_ord_obj)
+    sleeps = []
+    monkeypatch.setattr(gridbot_body.time, "sleep", lambda s: sleeps.append(s))
+
+    class FakeDT(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 15, 7, 23, 0)
+
+    monkeypatch.setattr(gridbot_body.datetime, "datetime", FakeDT)
+
+    held = [position(TICKERS[0], 1000)]
+    api = make_gridbot_body_api(
+        {TICKERS[0]: 1.0, TICKERS[1]: 1.0},
+        {TICKERS[0]: 100.0, TICKERS[1]: 50.0},
+        {TICKERS[0]: 100.5, TICKERS[1]: 50.5},
+        [held, held, []],
+    )
+    # pre-open snapshot has empty bid/ask; post-wait snapshot has real quotes
+    pre = {"close": 1.0, "buy_price": 0, "sell_price": 0}
+    post = {TICKERS[0]: {"close": 100.2, "buy_price": 99.0, "sell_price": 99.5},
+            TICKERS[1]: {"close": 50.0, "buy_price": 49.0, "sell_price": 49.5}}
+    calls = {"n": 0}
+
+    def snapshots(contracts):
+        calls["n"] += 1
+        return [pre] if calls["n"] <= 2 else [post[contracts[0].code]]
+
+    api.snapshots.side_effect = snapshots
+
+    result = GridbotBody(api)
+
+    assert sleeps[0] == 1 * 3600 + 42 * 60
+    assert [c.args[1].price for c in api.place_order.call_args_list] == [99.0]
+    assert not result

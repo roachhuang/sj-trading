@@ -62,6 +62,15 @@ def _format_drift_message(*, today, pnl_pct, z, regime, today_equity, prior_equi
     )
 
 
+TAKE_PROFIT_OPEN = datetime.time(9, 5)
+
+
+def seconds_until_open(now: datetime.datetime, open_at: datetime.time = TAKE_PROFIT_OPEN) -> float:
+    """Seconds from `now` until `open_at` today; 0 once it has passed."""
+    target = now.replace(hour=open_at.hour, minute=open_at.minute, second=0, microsecond=0)
+    return max((target - now).total_seconds(), 0.0)
+
+
 def GridbotBody(api):
     # gridBody runs from here
     contracts = {tid: api.contracts.get(tid) for tid in TICKERS}
@@ -118,6 +127,18 @@ def GridbotBody(api):
     take_profit = os.environ.get("SJ_TAKE_PROFIT", "false").lower() == "true"
     if take_profit:
         logging.warning("SJ_TAKE_PROFIT=true: closing 0052/00662 and stopping")
+        # Scheduled runs start ~07:23, before the 09:00 open; odd-lot sells
+        # are rejected then and the 30s poll below would cancel and fail.
+        wait = seconds_until_open(datetime.datetime.now())
+        if wait > 0:
+            logging.info("take-profit: waiting %.0fs for market open", wait)
+            time.sleep(wait)
+            # The startup snapshot is pre-open; reprice off live bid/ask.
+            for tid in TICKERS:
+                snap = api.snapshots([contracts[tid]])[0]
+                bot1.stockPrice[tid] = snap['close']
+                bot1.stockBid[tid] = snap['buy_price']
+                bot1.stockAsk[tid] = snap['sell_price']
         close_ok = bot1.close_positions()
         positions_flat = close_ok and bot1.uppershare == 0 and bot1.lowershare == 0
         deadline = time.monotonic() + 30
