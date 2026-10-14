@@ -60,7 +60,10 @@ jobs:
     timeout-minutes: 360
     env:
       SJ_PRODUCTION: "true"
-      SJ_TAKE_PROFIT: ${{ github.event.inputs.take_profit == 'true' }}
+      # Repo variable SJ_HALT=true makes every run (incl. scheduled) liquidate
+      # 0052/00662 and stop instead of rebalancing. Idempotent once flat.
+      # Delete the variable to resume trading.
+      SJ_TAKE_PROFIT: ${{ github.event.inputs.take_profit == 'true' || vars.SJ_HALT == 'true' }}
       # gridbot_body.py gates its trading loop on datetime.now() wall-clock
       # hours (act 09:00-13:30, cancel at 13:2x, exit at 14-15). Runners
       # default to UTC, which shifts those gates -8h: the exit window becomes
