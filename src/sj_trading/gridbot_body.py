@@ -5,7 +5,6 @@ import time
 import shioaji as sj
 import logging
 import datetime
-import time
 import sys
 from threading import Lock
 # 處理ticks即時資料更新的部分
@@ -24,7 +23,6 @@ g_upperid = '0052'
 g_lowerid = '00662'
 TICKERS = (g_upperid, g_lowerid)
 ENABLE_PREMARKET = False
-ans = ''
 
 
 def evaluate_daily_drift(today_equity: float, prior_equity: float | None,
@@ -217,9 +215,14 @@ def GridbotBody(api):
                 # or a real problem.
                 regime = "unknown"
                 try:
-                    if bot1.upper_close is not None and bot1.lower_close is not None:
-                        blended = misc.blended_price(bot1.upper_close, bot1.lower_close)
-                        regime = misc.label_regimes(blended).iloc[-1]
+                    # Imported here, not at module top: this is the live
+                    # bot's only yfinance use and it only runs once an
+                    # alert has already fired. Same loader the backtest
+                    # labels regimes from, so both see identical prices.
+                    from sj_trading.backtest import load_prices
+                    closes = load_prices(period="2y")
+                    blended = misc.blended_price(closes["upper"], closes["lower"])
+                    regime = misc.label_regimes(blended).iloc[-1]
                 except Exception as e:
                     logging.error(f"regime annotation failed: {e}")
                 logging.error(
@@ -237,26 +240,48 @@ def GridbotBody(api):
             drift = None
         return drift
 
+    def finish_day(cancel_orders: bool):
+        """End-of-day wrap-up shared by every exit path: optionally cancel
+        open orders, run the drift check, and persist money.json and
+        equity_snapshot.json. Returns log_daily_pnl()'s drift result.
+
+        Positions are re-read first: order_cb has already moved cash for
+        every fill, but uppershare/lowershare were last read *before* the
+        final cycle's orders went out, so without this refresh a fill in
+        that last cycle misstates equity by the whole trade value."""
+        if cancel_orders:
+            try:
+                bot1.cancelOrders()
+            except Exception as e:
+                logging.error(f"finish_day: cancelOrders failed: {e}")
+        if not bot1.getPositions():
+            logging.error("finish_day: getPositions failed, equity uses stale share counts")
+        today_equity = bot1.live_cash_right_now + stock_value()
+        drift = log_daily_pnl(today_equity)
+        misc.write_json("money.json", bot1.live_cash_right_now)
+        misc.write_json("equity_snapshot.json", today_equity)
+        return drift
+
     logging.info("starting cash for today's run: {:.2f}".format(bot1.live_cash_right_now))
     logging.info("uppershare value: {:.2f}".format(stockPrice[g_upperid]*bot1.uppershare))
     logging.info("lowershare value: {:.2f}".format(stockPrice[g_lowerid]*bot1.lowershare))
     logging.info("totalcapital: {:.2f}".format(totalcapital))
-    # 決定要不要新增更多資金進交易機器人裡, ans won't be '' after 2nd round.
-    # here declare ans as global is for updating the global value of ans
-    # global ans
-    # if (ans == ''):
-    #     ans = input("perform withdraw or deposit(y/n):\n")
-    #     if (ans == 'y'):
-    #         amount = input(
-    #             "withdraw or deposit amount(>0:deposit,<0:withdraw):\n")
-    #         bot1.initmoney = bot1.initmoney+int(amount)
-    # bot1.live_cash_right_now = bot1.initmoney
 
-    # 用來處理多線程的變數,在更新價格和訂單成交回報時會用到
-    # It contains Lock objects associated with identifiers g_upperid and g_lowerid. These locks are used to synchronize
-    # access to the dictionaries stockPrice, stockBid, and stockAsk, which are accessed concurrently by multiple threads.
-    mutexDict = {tid: Lock() for tid in TICKERS}
-    mutexBidAskDict = {tid: Lock() for tid in TICKERS}
+    # One lock guards stockPrice/stockBid/stockAsk: the quote callbacks
+    # write them on Shioaji's threads, sync_quotes() reads them on this one.
+    quote_lock = Lock()
+
+    def sync_quotes():
+        """Copy one consistent snapshot of the live quotes into bot1, so a
+        whole rebalance cycle prices off the same bid/ask/last. A last
+        trade outside the current bid/ask is replaced by the mid."""
+        with quote_lock:
+            for tid in TICKERS:
+                if stockPrice[tid] > stockAsk[tid] or stockPrice[tid] < stockBid[tid]:
+                    stockPrice[tid] = (stockAsk[tid] + stockBid[tid]) / 2
+                bot1.stockPrice[tid] = stockPrice[tid]
+                bot1.stockBid[tid] = stockBid[tid]
+                bot1.stockAsk[tid] = stockAsk[tid]
 
     # 告訴系統要訂閱
     # 1.ticks資料(用來看成交價)
@@ -267,21 +292,15 @@ def GridbotBody(api):
 
     @api.on_tick_stk_v1()
     def STKtick_callback(tick: TickSTKv1):
-        code = tick.code
-        mutexDict[code].acquire()
-        stockPrice[code] = float(tick.close)
-        mutexDict[code].release()
+        with quote_lock:
+            stockPrice[tick.code] = float(tick.close)
 
     # 處理bidask即時資料更新的部分
     @api.on_bidask_stk_v1()
     def STK_BidAsk_callback(bidask: BidAskSTKv1):
-        code = bidask.code
-        mutexBidAskDict[code].acquire()
-        bidlist = [float(i) for i in bidask.bid_price]
-        asklist = [float(i) for i in bidask.ask_price]
-        stockBid[code] = bidlist[0]
-        stockAsk[code] = asklist[0]
-        mutexBidAskDict[code].release()
+        with quote_lock:
+            stockBid[bidask.code] = float(bidask.bid_price[0])
+            stockAsk[bidask.code] = float(bidask.ask_price[0])
 
     @api.on_event()
     def event_callback(resp_code: int, event_code: int, info: str, event: str):
@@ -316,25 +335,12 @@ def GridbotBody(api):
             # via the exchange - just persist and stop instead of looping
             # forever on `continue` until the CI job timeout kills it.
             if (hour >= 14):
-                today_equity = bot1.live_cash_right_now + stock_value()
-                drift_result = log_daily_pnl(today_equity)
-                try:
-                    misc.write_json("money.json", bot1.live_cash_right_now)
-                    misc.write_json("equity_snapshot.json", today_equity)
-                except Exception as e:
-                    logging.error('jobs_per1min  Error Message B: ' + str(e))
+                drift_result = finish_day(cancel_orders=False)
                 break
 
             # cancel all orders 10m before mkt close
             if (hour == 13 and minute > 20):
-                try:
-                    bot1.cancelOrders()
-                    today_equity = bot1.live_cash_right_now + stock_value()
-                    drift_result = log_daily_pnl(today_equity)
-                    misc.write_json("money.json", bot1.live_cash_right_now)
-                    misc.write_json("equity_snapshot.json", today_equity)
-                except Exception as e:
-                    logging.error('jobs_per1min  Error Message A: ' + str(e))
+                drift_result = finish_day(cancel_orders=True)
                 break
 
             # premarket gate: skip trading before the 9:00 open (pre-open call
@@ -343,50 +349,14 @@ def GridbotBody(api):
                 if (hour < 9):
                     continue
 
-            # 處理成交價不在買賣價中間的狀況
-            # Acquires the locks associated with each ticker in mutexDict/mutexBidAskDict,
-            # used to synchronize access to stockPrice/stockBid/stockAsk across threads.
-            for tid in TICKERS:
-                mutexDict[tid].acquire()
-                mutexBidAskDict[tid].acquire()
-
-            for tid in TICKERS:
-                if stockPrice[tid] > stockAsk[tid] or stockPrice[tid] < stockBid[tid]:
-                    stockPrice[tid] = (stockAsk[tid] + stockBid[tid]) / 2
-
-            # save prices to gridbot
-            for tid in TICKERS:
-                bot1.stockPrice[tid] = stockPrice[tid]
-                bot1.stockBid[tid] = stockBid[tid]
-                bot1.stockAsk[tid] = stockAsk[tid]
-            for tid in TICKERS:
-                mutexDict[tid].release()
-                mutexBidAskDict[tid].release()
-            
+            sync_quotes()
             # 更新買賣單, we can place order anytime before 2pm
             bot1.updateOrder()
 
     except KeyboardInterrupt:
         logging.warning("\n Ctrl-C detected. Exiting gracefully...")
-        try:
-            bot1.cancelOrders()
-        except Exception as e:
-            logging.error(f"cancelOrders failed on KeyboardInterrupt: {e}")
-        today_equity = bot1.live_cash_right_now + stock_value()
-        drift_result = log_daily_pnl(today_equity)
-        try:
-            misc.write_json("money.json", bot1.live_cash_right_now)
-            misc.write_json("equity_snapshot.json", today_equity)
-        except Exception as e:
-            logging.error(f"write_json failed on KeyboardInterrupt: {e}")
-        try:
-            api.logout()
-        except Exception as e:
-            print("An error occurred:", e)
-        finally:
-            print(
-                "This code is always executed, regardless of whether an exception occurred or not")
-        exit
+        # main() logs out right after this returns.
+        drift_result = finish_day(cancel_orders=True)
 
     return drift_result
 

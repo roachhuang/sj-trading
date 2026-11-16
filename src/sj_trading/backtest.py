@@ -1,27 +1,25 @@
-"""Backtests GridBot's bias-ratio grid strategy against historical daily
-prices, and grid-searches its five tunable parameters.
+"""Backtests GridBot's fixed-allocation rebalancing strategy against
+historical daily prices.
 
     uv run python -m sj_trading.backtest
 
-Replicates calculateGrid/calculateSharetarget/sendOrders from gridbot.py
-day-by-day using daily closes for decisions and configurable conservative
-execution slippage for fills, including the trigger threshold, the +-999
-share clamp, the cash-constrained buy sizing, and realistic transaction
-costs. Not wired into the live bot - this is an offline research tool for
-periodically re-checking whether the current `GridBot.parameters` are still
-reasonable.
+Replicates calculateSharetarget/sendOrders from gridbot.py day-by-day using
+daily closes for decisions and configurable conservative execution slippage
+for fills, including the trigger threshold, the cash-constrained buy sizing,
+and realistic transaction costs. Not wired into the live bot's trading -
+this is an offline research tool, and the source of backtest_stats.json
+(the live drift check's baseline). Re-run it whenever
+GridBot.TARGET_UPPER_ALLOC changes.
 """
 import datetime
-import itertools
 import json
 import math
-import time
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from sj_trading.gridbot import TICKERS
+from sj_trading.gridbot import GridBot, TICKERS
 from sj_trading.misc import blended_price, get_tick_unit, label_regimes
 
 UPPER, LOWER = TICKERS
@@ -40,10 +38,9 @@ ETF_TAX = 0.1 / 100
 # 2025-04-07/04-10, the tariff-shock selloff). Full-history scan of both
 # tickers found exactly one move exceeding this: 0052's genuine 1-for-7
 # split (+85.7%, 2025-11-17). 0.30 sits comfortably above all observed real
-# volatility and comfortably below any real split. A lower threshold here
-# is worse than in the live bot's truncate: this function *rescales*
-# everything before a false-positive jump, silently distorting real prices
-# rather than just dropping history.
+# volatility and comfortably below any real split. Don't lower it:
+# _adjust_split_defects *rescales* everything before a false-positive jump,
+# silently distorting real prices.
 DAILY_LIMIT_PCT = 0.30
 DEFAULT_SLIPPAGE_TICKS = 1.0
 
@@ -67,9 +64,7 @@ def _fill_price(price: float, action: str, slippage_ticks: float) -> float:
 
 def _adjust_split_defects(close_series: pd.Series) -> pd.Series:
     """Retroactively rescales everything before each implausible jump by
-    the jump ratio, so the whole series becomes one continuous scale -
-    unlike the live bot's truncate-and-drop approach, a full backtest needs
-    the history preserved rather than thrown away."""
+    the jump ratio, so the whole series becomes one continuous scale."""
     s = close_series.copy()
     while True:
         pct_change = s.pct_change().abs()
@@ -93,99 +88,57 @@ def load_prices(period: str = "max") -> pd.DataFrame:
 
 def backtest(
     df: pd.DataFrame,
-    ratio: pd.Series,
-    params: dict,
+    upper_alloc: float,
     init_capital: float = 100_000.0,
     slippage_ticks: float = DEFAULT_SLIPPAGE_TICKS,
     return_daily: bool = False,
 ):
-    """Returns None if there isn't enough history for a meaningful sample."""
-    bias_upper = params["BiasUpperLimit"]
-    upper_pos = params["UpperLimitPosition"]
-    bias_lower = params["BiasLowerLimit"]
-    lower_pos = params["LowerLimitPosition"]
-    period = params["BiasPeriod"]
+    """Simulates holding `upper_alloc` of capital in df["upper"] and the
+    rest in df["lower"], rebalancing once a day at the close under the live
+    bot's rules. Returns None if there isn't enough history for a
+    meaningful sample.
 
-    ma = ratio.rolling(period).mean()
-    valid = ma.notna()
-    if valid.sum() < 60:
+    Each day sells are applied before buys: the live bot cycles every 3
+    minutes, so within one day a sell's proceeds are available to the
+    other leg's buy a cycle later."""
+    if len(df) < 60:
         return None
 
-    upper_px = df["upper"].to_numpy()
-    lower_px = df["lower"].to_numpy()
-    bias = (ratio / ma).to_numpy()
-
+    px = {"upper": df["upper"].to_numpy(), "lower": df["lower"].to_numpy()}
+    alloc = {"upper": upper_alloc, "lower": 1.0 - upper_alloc}
+    shares = {"upper": 0, "lower": 0}
     money = init_capital
-    upper_shares = 0
-    lower_shares = 0
-    trigger = None  # set once, matching production's one-time bot1.trigger
+    # Set once from starting capital, matching production's one-time bot1.trigger.
+    trigger = max(2000.0, init_capital * 0.005)
     equity = np.empty(len(df))
 
-    start = int(np.argmax(valid.to_numpy()))
     for i in range(len(df)):
-        if i < start:
-            equity[i] = init_capital
-            continue
+        close = {leg: px[leg][i] for leg in px}
+        capital = money + sum(shares[leg] * close[leg] for leg in px)
+        qty = {leg: int(alloc[leg] * capital / close[leg]) - shares[leg] for leg in px}
 
-        up, lp = upper_px[i], lower_px[i]
-        upper_buy_price = _fill_price(up, "Buy", slippage_ticks)
-        upper_sell_price = _fill_price(up, "Sell", slippage_ticks)
-        lower_buy_price = _fill_price(lp, "Buy", slippage_ticks)
-        lower_sell_price = _fill_price(lp, "Sell", slippage_ticks)
-        if trigger is None:
-            total_capital = money + upper_shares * up + lower_shares * lp
-            trigger = max(2000.0, total_capital * 0.005)
-
-        b = bias[i]
-        share_target = (b - bias_lower) / (bias_upper - bias_lower)
-        share_target = share_target * (upper_pos - lower_pos) + lower_pos
-        share_target = max(share_target, upper_pos)
-        share_target = min(share_target, lower_pos)
-
-        capital_in_bot = money + upper_shares * up + lower_shares * lp
-        upper_target = int(share_target * capital_in_bot / up)
-        lower_target = int((1.0 - share_target) * capital_in_bot / lp)
-
-        qty_upper = max(min(upper_target - upper_shares, 999), -999)
-        qty_lower = max(min(lower_target - lower_shares, 999), -999)
-
-        if qty_upper > 0 and money < upper_buy_price * qty_upper:
-            qty_upper = max(int(money / upper_buy_price), 0)
-        if qty_upper != 0 and abs(qty_upper) * up >= trigger:
-            if qty_upper > 0:
-                principal = math.floor(upper_buy_price * qty_upper)
-                commission = math.floor(principal * BROKERAGE)
-                cost = principal + commission
-                if money >= cost:
-                    money -= cost
-                    upper_shares += qty_upper
+        for leg in sorted(px, key=lambda leg: qty[leg]):
+            q = qty[leg]
+            if q > 0:
+                buy_price = _fill_price(close[leg], "Buy", slippage_ticks)
+                if money < buy_price * q:
+                    q = max(int(money / buy_price), 0)
+            if q == 0 or abs(q) * close[leg] < trigger:
+                continue
+            if q > 0:
+                principal = math.floor(buy_price * q)
+                cost = principal + math.floor(principal * BROKERAGE)
+                if money < cost:
+                    continue
+                money -= cost
             else:
-                principal = math.floor(upper_sell_price * abs(qty_upper))
-                commission = math.floor(principal * BROKERAGE)
-                tax = math.floor(principal * ETF_TAX)
-                money += principal - commission - tax
-                upper_shares += qty_upper  # negative
+                principal = math.floor(_fill_price(close[leg], "Sell", slippage_ticks) * -q)
+                money += principal - math.floor(principal * BROKERAGE) - math.floor(principal * ETF_TAX)
+            shares[leg] += q
 
-        if qty_lower > 0 and money < lower_buy_price * qty_lower:
-            qty_lower = max(int(money / lower_buy_price), 0)
-        if qty_lower != 0 and abs(qty_lower) * lp >= trigger:
-            if qty_lower > 0:
-                principal = math.floor(lower_buy_price * qty_lower)
-                commission = math.floor(principal * BROKERAGE)
-                cost = principal + commission
-                if money >= cost:
-                    money -= cost
-                    lower_shares += qty_lower
-            else:
-                principal = math.floor(lower_sell_price * abs(qty_lower))
-                commission = math.floor(principal * BROKERAGE)
-                tax = math.floor(principal * ETF_TAX)
-                money += principal - commission - tax
-                lower_shares += qty_lower
+        equity[i] = money + sum(shares[leg] * close[leg] for leg in px)
 
-        equity[i] = money + upper_shares * up + lower_shares * lp
-
-    eq = pd.Series(equity, index=df.index).iloc[start:]
+    eq = pd.Series(equity, index=df.index)
     daily_ret = eq.pct_change().dropna()
     if daily_ret.std() == 0 or len(daily_ret) < 30:
         return None
@@ -221,88 +174,41 @@ def buy_and_hold(df: pd.DataFrame):
     return {"total_return": ret, "ann_return": ann_ret, "sharpe": sharpe, "max_dd": max_dd}
 
 
-def grid_search(
-    df,
-    bias_upper_list,
-    bias_lower_list,
-    upper_pos_list,
-    lower_pos_list,
-    period_list,
+def compare_allocations(
+    df: pd.DataFrame,
+    allocs,
     slippage_ticks: float = DEFAULT_SLIPPAGE_TICKS,
-):
-    """Position-bound constraints (up_pos < low_pos) keep results as a
-    genuine two-asset grid; pass e.g. [0.15..0.35] / [0.65..0.85] rather
-    than ranges touching 0/1, which degenerate into a binary switch between
-    the two tickers instead of a blended allocation."""
-    ratio = df["upper"] / df["lower"]
-    results = []
-    t0 = time.time()
-    combos = 0
-    for period in period_list:
-        ma = ratio.rolling(period).mean()
-        if ma.notna().sum() < 60:
-            continue
-        for bu, bl in itertools.product(bias_upper_list, bias_lower_list):
-            if bu <= bl:
-                continue
-            for up_pos, low_pos in itertools.product(upper_pos_list, lower_pos_list):
-                if up_pos >= low_pos:
-                    continue
-                params = {
-                    "BiasUpperLimit": bu,
-                    "UpperLimitPosition": up_pos,
-                    "BiasLowerLimit": bl,
-                    "LowerLimitPosition": low_pos,
-                    "BiasPeriod": period,
-                }
-                res = backtest(df, ratio, params, slippage_ticks=slippage_ticks)
-                combos += 1
-                if res is not None:
-                    results.append({**params, **res})
-    print(f"tested {combos} combos in {time.time()-t0:.1f}s, {len(results)} valid")
-    return pd.DataFrame(results)
-
-
-def validate_out_of_sample(
-    df,
-    params,
-    train_frac=0.7,
-    slippage_ticks: float = DEFAULT_SLIPPAGE_TICKS,
-):
-    split = int(len(df) * train_frac)
-    train_df, test_df = df.iloc[:split], df.iloc[split:]
-    train_res = backtest(
-        train_df,
-        train_df["upper"] / train_df["lower"],
-        params,
-        slippage_ticks=slippage_ticks,
-    )
-    test_res = backtest(
-        test_df,
-        test_df["upper"] / test_df["lower"],
-        params,
-        slippage_ticks=slippage_ticks,
-    )
-    return train_res, test_res
+) -> pd.DataFrame:
+    """One backtest row per upper-ticker allocation in `allocs`, for eyeballing
+    how sensitive the result is to the split. Deliberately a comparison
+    table, not an optimiser: over 2016-2026 Sharpe barely moves across
+    splits, so picking the top row would just be hindsight."""
+    rows = []
+    for a in allocs:
+        res = backtest(df, a, slippage_ticks=slippage_ticks)
+        if res is not None:
+            rows.append({"upper_alloc": a, **res})
+    return pd.DataFrame(rows)
 
 
 def write_stats(
     df: pd.DataFrame,
-    params: dict,
+    upper_alloc: float,
     path: str = "backtest_stats.json",
     slippage_ticks: float = DEFAULT_SLIPPAGE_TICKS,
 ) -> dict:
-    """Snapshots the backtested daily-return distribution for `params` to
-    `path`, in the shape misc.is_pnl_outlier's `stats` argument expects.
-    Run manually on the same cadence as re-tuning GridBot.parameters -
-    not invoked automatically by the live bot or CI."""
-    ratio = df["upper"] / df["lower"]
-    result = backtest(df, ratio, params, slippage_ticks=slippage_ticks)
+    """Snapshots the backtested daily-return distribution for `upper_alloc`
+    to `path`, in the shape misc.is_pnl_outlier's `stats` argument expects.
+    Run manually (and commit the file) whenever GridBot.TARGET_UPPER_ALLOC
+    changes - not invoked automatically by the live bot or CI."""
+    result = backtest(df, upper_alloc, slippage_ticks=slippage_ticks)
+    if result is None:
+        raise ValueError("backtest returned None - not enough history")
     stats = {
         "mean_daily_return": result["daily_mean"],
         "std_daily_return": result["daily_std"],
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "params": params,
+        "target_upper_alloc": upper_alloc,
         "execution_slippage_ticks": slippage_ticks,
     }
     with open(path, "w") as f:
@@ -312,24 +218,21 @@ def write_stats(
 
 def backtest_by_regime(
     df: pd.DataFrame,
-    params: dict,
+    upper_alloc: float,
     window: int = 20,
     threshold: float = 0.02,
     slippage_ticks: float = DEFAULT_SLIPPAGE_TICKS,
 ) -> pd.DataFrame:
     """Splits the strategy's daily returns by market regime and reports
     Sharpe per regime, to check whether backtested performance is uniform
-    or concentrated in one regime (e.g. the 2021-07..2023-04 rate-hike bear
-    market backtested near-flat, Sharpe ~0.10, vs 1.5-2.7 elsewhere).
+    or concentrated in one regime. The bot is always fully invested, so
+    expect Bear-regime Sharpe to be negative.
 
-    Regime is labeled off the buy&hold 50/50 blended price (overall market
-    direction), not the strategy's upper/lower bias ratio - the ratio
-    drives *allocation* between the two ETFs, it isn't a market-direction
-    signal."""
-    ratio = df["upper"] / df["lower"]
-    result = backtest(df, ratio, params, slippage_ticks=slippage_ticks, return_daily=True)
+    Regime is labeled off the 50/50 blended price (overall market
+    direction) - see misc.blended_price/label_regimes."""
+    result = backtest(df, upper_alloc, slippage_ticks=slippage_ticks, return_daily=True)
     if result is None:
-        raise ValueError("backtest returned None - not enough history for these params")
+        raise ValueError("backtest returned None - not enough history")
     daily_ret = result["daily_returns"]
 
     blended = blended_price(df["upper"], df["lower"])
@@ -353,46 +256,19 @@ def backtest_by_regime(
 
 
 if __name__ == "__main__":
-    from sj_trading.gridbot import GridBot
-
+    live_alloc = GridBot.TARGET_UPPER_ALLOC
     df = load_prices()
     print("data range:", df.index.min().date(), "to", df.index.max().date(), f"({len(df)} days)")
 
-    results = grid_search(
-        df,
-        bias_upper_list=[1.05, 1.08, 1.1, 1.15, 1.2, 1.3, 1.4],
-        bias_lower_list=[0.7, 0.75, 0.8, 0.85, 0.9, 0.95],
-        upper_pos_list=[0.15, 0.2, 0.25, 0.3, 0.35],
-        lower_pos_list=[0.65, 0.7, 0.75, 0.8, 0.85],
-        period_list=[30, 45, 60, 73, 90, 120, 150, 180, 220],
-    )
+    print(f"\n=== Live allocation ({live_alloc}) vs other fixed splits ===")
+    table = compare_allocations(df, sorted({0.35, 0.5, live_alloc, 0.8}))
+    print(table[["upper_alloc", "sharpe", "ann_return", "ann_vol", "max_dd"]].to_string(index=False))
 
-    print("\n=== Top 10 by Sharpe ===")
-    print(results.sort_values("sharpe", ascending=False).head(10).to_string(index=False))
-
-    best = results.sort_values("sharpe", ascending=False).iloc[0]
-    best_params = {
-        "BiasUpperLimit": best.BiasUpperLimit,
-        "UpperLimitPosition": best.UpperLimitPosition,
-        "BiasLowerLimit": best.BiasLowerLimit,
-        "LowerLimitPosition": best.LowerLimitPosition,
-        "BiasPeriod": int(best.BiasPeriod),
-    }
-    train_res, test_res = validate_out_of_sample(df, best_params)
-    print("\nBest params:", best_params)
-    print("Train-period (in-sample):", train_res)
-    print("Test-period (out-of-sample):", test_res)
-
-    print("\n=== Current production parameters, for comparison ===")
-    ratio = df["upper"] / df["lower"]
-    print(GridBot.parameters, "->", backtest(df, ratio, GridBot.parameters))
-
-    print("\n=== Buy & hold 50/50 ===")
+    print("\n=== Buy & hold 50/50 (never rebalanced) ===")
     print(buy_and_hold(df))
 
-    print("\n=== Current production parameters by market regime ===")
-    print(backtest_by_regime(df, GridBot.parameters).to_string(index=False))
+    print("\n=== Live allocation by market regime ===")
+    print(backtest_by_regime(df, live_alloc).to_string(index=False))
 
     print("\n=== Writing backtest_stats.json for live drift monitoring ===")
-    stats = write_stats(df, GridBot.parameters)
-    print(stats)
+    print(write_stats(df, live_alloc))

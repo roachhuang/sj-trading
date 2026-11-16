@@ -1,10 +1,8 @@
 import shioaji as sj
-import yfinance as yf
 
 from typing import Dict
 from shioaji import OrderState, OrderStatus
 from threading import Lock
-import datetime
 import math
 
 g_upperid = "0052"
@@ -24,37 +22,18 @@ class GridBot:
     MIN_FEE = 1               # odd lot 手續費最低限制
     MAX_BUY_SPREAD_PCT = 0.005  # skip buys when 賣1 is more than 0.5% above 買1
 
-    # Re-backtested 2016-2026 after fixing an unlabeled 1-for-7 split in
-    # 0052's yfinance data (2025-11, see backtest.py's _adjust_split_defects)
-    # that had corrupted the prior parameters' backtest: Sharpe 0.94
-    # in-sample / 1.99 out-of-sample vs. buy&hold's 1.30 on the same clean
-    # data - the previous params' apparent large edge over buy&hold was
-    # partly an artifact of that bad data. Position bounds kept away from
-    # 0/1 so this stays a genuine two-asset grid rather than an on/off switch.
-    #
-    # retune.py's apply_params() rewrites the AUTO-RETUNE block below (the
-    # metrics comment + parameters dict) every quarterly cron run - see
-    # .github/workflows/retune.yml. Manual edits inside it survive only
-    # until the next scheduled run; if a manual value needs to stick, also
-    # update backtest_stats.json (see write_stats()) so the drift check's
-    # baseline matches.
-    # AUTO-RETUNE:START
-    # Auto-retuned by retune.py (2026-10-01). In-sample Sharpe
-    # 0.91, out-of-sample Sharpe 1.71
-    # (floor: 0.5). See backtest_stats.json for the full
-    # snapshot.
-    parameters = {
-        "BiasUpperLimit": 1.4,
-        "UpperLimitPosition": 0.35,
-        "BiasLowerLimit": 0.95,
-        "LowerLimitPosition": 0.7,
-        "BiasPeriod": 150,
-    }
-    # AUTO-RETUNE:END
+    # Fixed share of the bot's capital held in upperid (0052); the rest goes
+    # to lowerid (00662). Replaced a bias-ratio (乖離率) tilt on 2026-11-16:
+    # over 2016-06..2026-11 the tilt backtested at Sharpe 1.16 against 1.18
+    # for a constant mix at the tilt's own average allocation (~0.64), so
+    # the signal added nothing a fixed split doesn't already give. 0.65
+    # keeps the bot holding what it was already holding on average - it is
+    # a continuity choice, not an optimised one. If this changes, re-run
+    # backtest.py so backtest_stats.json (the drift check's baseline)
+    # matches.
+    TARGET_UPPER_ALLOC = 0.65
 
     def __init__(self, api: sj.Shioaji, logging):
-        # keep track of MA calulated date
-        self.year = self.month = self.day = 0
         self.trigger = 2000  # 最低交易金額門檻,避免交易金額太小,錢被手續費低消吃光光
         # Must be 3 independent dicts, not a chained assignment - gridbot_body.py
         # syncs these from 3 separately-maintained dicts every cycle; aliasing
@@ -65,9 +44,6 @@ class GridBot:
         self.stockAsk = {}
         self.start_cash = self.g_settlement = 0
         self.upperid, self.lowerid = TICKERS
-        # Populated by UpdateMA(); stay None until the first successful
-        # fetch (e.g. a crash-restart exiting before updateOrder() ever ran).
-        self.upper_close = self.lower_close = None
         self.live_cash_right_now = self.uppershare = self.lowershare = 0
         self.api = api
         self.logging = logging
@@ -110,67 +86,6 @@ class GridBot:
         self.logging.info(f"in order_cb, stat: {stat}")
 
     #########################################
-    # 7.1 計算策略目標部位(百分比)
-    ###########################################
-    # A jump beyond this (with a buffer) cannot be real price action - only a
-    # data defect (e.g. an unlabeled/missing split adjustment). Mixing pre/post
-    # scales across such a jump corrupts any average computed over it.
-    #
-    # NOT a flat +-10%: TWSE exempts foreign-index-linked ETFs (e.g. 00662,
-    # tracks NASDAQ-100) from the domestic price limit, so single-day moves
-    # up to ~14% are real (confirmed against TWSE: 00662 +14.3%/+12.3% on
-    # 2025-04-07/04-10, the tariff-shock selloff). Full-history scan of both
-    # tickers found exactly one move exceeding this: 0052's genuine 1-for-7
-    # split (+85.7%, 2025-11-17). 0.30 sits comfortably above all observed
-    # real volatility and comfortably below any real split.
-    DAILY_LIMIT_PCT = 0.30
-
-    def _truncate_at_bad_data(self, close_series):
-        pct_change = close_series.pct_change().abs()
-        # 找出真正超過 30% 單日跳空的極端異常點
-        bad = pct_change[pct_change > self.DAILY_LIMIT_PCT]
-        if bad.empty:
-            return close_series
-        last_bad_date = bad.index[-1]
-        self.logging.error(f"UpdateMA: implausible >{self.DAILY_LIMIT_PCT:.0%} single-day move detected at {last_bad_date}, truncating MA window to data after it")
-        return close_series[close_series.index > last_bad_date]
-
-    def UpdateMA(self):
-        now = datetime.datetime.now()
-        # 如果有換日就更新均線,或者第一次呼叫的時候也會更新均線
-        if now.year != self.year or now.month != self.month or now.day != self.day:
-            try:
-                # 從Yfinance抓取日資料
-                upper = yf.Ticker(self.upperid + ".tw")
-                upper_hist = upper.history(period="2y")
-
-                # 計算均線
-                period = self.parameters["BiasPeriod"]
-                upper_close = self._truncate_at_bad_data(upper_hist["Close"])
-                # 1.如果是做 股票 / TWD 的網格那就只要股票價格取平均
-                # 2.如果是做 股票A / 股票B 的相對價值網格那就需要
-                # 先計算 股票A / 股票B 的收盤價，再取平均
-                if self.lowerid != "Cash":
-                    lower = yf.Ticker(self.lowerid + ".tw")
-                    lower_hist = lower.history(period="2y")
-                    lower_close = self._truncate_at_bad_data(lower_hist["Close"])
-                    close = (upper_close / lower_close).dropna()
-                    # Kept for gridbot_body.py's drift-alert regime annotation
-                    # (misc.blended_price/label_regimes) - not used by MA math.
-                    self.upper_close, self.lower_close = upper_close, lower_close
-                else:
-                    close = upper_close.dropna()
-                    self.upper_close = self.lower_close = None
-                self.MA = close[-period:].mean()
-                self.year = now.year
-                self.month = now.month
-                self.day = now.day
-                s = "MA:" + str(self.MA)
-                # self.logging.info(s)
-            except Exception as e:
-                self.logging.error(f"UpdateMA failed, keeping stale MA: {e}")
-
-    #########################################
     # 7.2 抓取庫存部位大小y
     #########################################
     def getPositions(self) -> bool:
@@ -184,67 +99,17 @@ class GridBot:
         return True
 
     def calculateSharetarget(self, upperprice, lowerprice) -> tuple:
-        # 計算目標部位百分比
-        upper_alloc_percentage = self.calculateGrid(upperprice, lowerprice)
-
-        # 計算機器人裡面有多少資產(可用現金+股票現值)
+        """Target share counts for (upperid, lowerid): TARGET_UPPER_ALLOC of
+        the bot's capital (its cash plus both holdings at the given prices)
+        in upperid and the rest in lowerid, rounded down to whole shares."""
         capitalInBot = self.live_cash_right_now + self.uppershare * upperprice + self.lowershare * lowerprice
 
-        # 計算目標部位(股數); int() 向零取整（無條件捨去）
-        uppershareTarget = int(upper_alloc_percentage * capitalInBot / upperprice)
-        lowershareTarget = int((1.0 - upper_alloc_percentage) * capitalInBot / lowerprice)
+        uppershareTarget = int(self.TARGET_UPPER_ALLOC * capitalInBot / upperprice)
+        lowershareTarget = int((1.0 - self.TARGET_UPPER_ALLOC) * capitalInBot / lowerprice)
 
         self.logging.info(f'uppershareTarget: {uppershareTarget}, pirce:{upperprice}')
         self.logging.info(f'lowershareTarget: {lowershareTarget}, price:{lowerprice}')
         return uppershareTarget, lowershareTarget
-
-    def calculateGrid(self, upperprice, lowerprice)->float:
-        """
-        乖離率是一個用來衡量股價與其移動平均線之間差距的指標。簡單來說，就是用來觀察股價是偏離了長期趨勢多還是少。
-
-        乖離率的計算方式
-
-        乖離率 = (當前股價 - 移動平均線) / 移動平均線 * 100%
-
-        當前股價： 股票在當天的收盤價。
-        移動平均線： 通常使用5日、10日、20日或更長的移動平均線。
-        乖離率的意義
-
-        判斷超買超賣：
-        乖離率過高：表示股價遠高於移動平均線，可能處於超買狀態，未來可能回檔。
-        乖離率過低：表示股價遠低於移動平均線，可能處於超賣狀態，未來可能反彈。
-        確認趨勢：
-        若乖離率持續維持正值且不斷擴大，表示股價處於強勁的上漲趨勢。
-        若乖離率持續維持負值且不斷擴大，表示股價處於下跌趨勢。
-        尋找進場時機：
-        當乖離率由正轉負，且股價跌破移動平均線時，可能是一個賣出訊號。
-        當乖離率由負轉正，且股價突破移動平均線時，可能是一個買入訊號。
-        """
-        MA = self.MA
-        if not MA or math.isnan(MA):
-            # Previously returned parameters["LowerLimitPosition"] as a
-            # claimed "no-op" fallback - that's actually the MAXIMUM
-            # possible allocation toward the upper ticker (the top of
-            # shareTarget's clamped range), so a stale/NaN MA (e.g. a
-            # yfinance blip) was driving an aggressive rebalance instead of
-            # doing nothing. Raising here is a genuine no-op: updateOrder()
-            # wraps this call in try/except and skips the whole cycle
-            # without sending any orders, exactly like its cancelOrders()/
-            # getPositions() failure guards just above it.
-            raise ValueError("calculateGrid: MA is 0/NaN")
-        # 計算目標部位百分比
-        BiasUpperLimit = self.parameters["BiasUpperLimit"]
-        UpperLimitPosition = self.parameters["UpperLimitPosition"]
-        BiasLowerLimit = self.parameters["BiasLowerLimit"]
-        LowerLimitPosition = self.parameters["LowerLimitPosition"]
-        # compute 乖離 rate
-        Bias = (upperprice / lowerprice) / MA
-        shareTarget = (Bias - BiasLowerLimit) / (BiasUpperLimit - BiasLowerLimit)
-        shareTarget = shareTarget * (UpperLimitPosition - LowerLimitPosition) + LowerLimitPosition
-        shareTarget = max(shareTarget, UpperLimitPosition)
-        shareTarget = min(shareTarget, LowerLimitPosition)
-        upper_alloc_percentage = shareTarget
-        return upper_alloc_percentage
 
     #########################################
     # 7.3. 實際掛單
@@ -252,11 +117,6 @@ class GridBot:
 
     def updateOrder(self):
         try:
-            #################################
-            # 0.更新日均線資料
-            #################################
-            self.UpdateMA()
-
             if not self.cancelOrders():
                 self.logging.error("updateOrder: cancelOrders incomplete, skipping this cycle to avoid placing new orders on top of stale ones")
                 return
@@ -306,11 +166,10 @@ class GridBot:
                     all_cancelled = False
         return all_cancelled
 
-    def createOrdObj(self, symbol, direction, qty, order_lot, price=None):
-        # Common expects quantity in lots (1 lot = 1000 shares); IntradayOdd
-        # expects raw shares. Caller passes whichever is correct per order_lot.
-        if price is None:
-            price = self._get_order_price(symbol, direction)
+    def createOrdObj(self, symbol, direction, qty, order_lot, price):
+        """Build a limit ROD order. `qty` is in lots for Common (1 lot =
+        1000 shares) and in raw shares for IntradayOdd - the caller passes
+        whichever is correct per order_lot."""
         return sj.StockOrder(
             price=price,
             quantity=qty,
@@ -381,30 +240,52 @@ class GridBot:
         return True
 
     def _sendOneOrder(self, symbol, qty, available, ignore_trigger=False):
+        """Trade `qty` shares of `symbol` (positive buys, negative sells)
+        and return the cash still available for the next leg this cycle.
+
+        Sells never add to `available` (proceeds are unsettled this cycle);
+        buys reduce it only by the portion actually submitted."""
         if qty == 0:
             return available
         direction = "Buy" if qty > 0 else "Sell"
         price = self._get_order_price(symbol, direction)
         if price is None:
             return available
-        if qty > 0 and available < price * qty:
-            qty = max(int(available / price), 0)
-        # trigger=NT$2000 as a preventative of commision.
-        if qty == 0 or (not ignore_trigger and abs(qty) * self.stockPrice[symbol] < self.trigger):
+        qty = self._size_order(symbol, qty, price, available, ignore_trigger)
+        if qty == 0:
             return available
+        ordered_shares = self._place_lots(symbol, direction, abs(qty), price)
+        if direction == "Buy":
+            available -= price * ordered_shares
+        return available
 
-        if qty > 0 and available <= price * qty:
-            return available
+    def _size_order(self, symbol, qty, price, available, ignore_trigger=False) -> int:
+        """Pure sizing rule: how many of the wanted `qty` shares to really
+        trade at `price`. Returns 0 to skip the order.
 
+        A buy is capped at what `available` cash covers and must leave some
+        cash over (cost strictly below `available`) as fee headroom. Any
+        order worth less than `self.trigger` is skipped so the minimum
+        brokerage fee doesn't eat tiny trades, unless `ignore_trigger`."""
+        if qty > 0:
+            if available < price * qty:
+                qty = max(int(available / price), 0)
+            if available <= price * qty:
+                return 0
+        if not ignore_trigger and abs(qty) * self.stockPrice[symbol] < self.trigger:
+            return 0
+        return qty
+
+    def _place_lots(self, symbol, direction, shares, price) -> int:
+        """Submit `shares` as a Common-lot order plus an IntradayOdd order
+        and return how many shares were actually accepted.
+
+        IntradayOdd orders only take 0-999 shares, so anything >=1000 needs
+        a separate Common-lot order (quantity in lots) for the round-lot
+        portion. Only submitted orders are counted, so a partial failure
+        (e.g. the odd-lot leg rejected) isn't reported as bought/sold."""
         contract = self.api.contracts.get(symbol)
-        # A target delta can exceed 999 shares (e.g. 3950) - IntradayOdd
-        # orders only accept 0-999 shares, so anything >=1000 needs a
-        # separate Common-lot order (quantity in lots) for the round-lot
-        # portion plus an IntradayOdd order for the remainder.
-        lots, remainder = divmod(abs(qty), 1000)
-        # Only count shares from orders that actually got submitted, so a
-        # partial failure (e.g. the odd-lot leg rejected) doesn't debit
-        # available for shares that were never really bought.
+        lots, remainder = divmod(shares, 1000)
         successfully_ordered_shares = 0
         for order_lot, lot_qty in ((sj.StockOrderLot.Common, lots), (sj.StockOrderLot.IntradayOdd, remainder)):
             if lot_qty == 0:
@@ -429,11 +310,4 @@ class GridBot:
                 continue
             self.logging.info(f"{direction} {symbol} {order_lot} @ {order.price}, qty: {order.quantity}")
             successfully_ordered_shares += lot_qty * 1000 if order_lot == sj.StockOrderLot.Common else lot_qty
-
-        # Sells never add to available (proceeds unsettled this cycle) -
-        # only buys reduce it, and only for the portion actually submitted.
-        if qty > 0:
-            available -= price * successfully_ordered_shares
-        return available
-
-            
+        return successfully_ordered_shares

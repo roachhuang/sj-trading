@@ -1,4 +1,4 @@
-"""Cross-checks the bad-data detectors in gridbot.py/backtest.py against
+"""Cross-checks backtest.py's bad-data detector against
 TWSE-confirmed real-world price moves (see CLAUDE.md Lessons):
 
 - 00662 (NASDAQ-100-linked, exempt from the domestic +-10% limit) moved
@@ -10,9 +10,7 @@ TWSE-confirmed real-world price moves (see CLAUDE.md Lessons):
 """
 import pandas as pd
 import pytest
-from unittest.mock import MagicMock
 
-from sj_trading.gridbot import GridBot
 from sj_trading.backtest import _adjust_split_defects
 
 
@@ -21,36 +19,16 @@ def make_series(*closes):
     return pd.Series(closes, index=idx)
 
 
-def test_twse_confirmed_tariff_shock_move_is_not_truncated():
+def test_twse_confirmed_tariff_shock_move_is_not_rescaled():
     """00662 real move: 100 -> 114.3 (+14.3%) -> 128.35 (+12.3%). Must survive intact."""
-    bot = GridBot(MagicMock(), MagicMock())
     close = make_series(100.0, 114.3, 128.35, 130.0, 131.0)
 
-    result = bot._truncate_at_bad_data(close)
-
-    assert len(result) == len(close)
-    assert result.equals(close)
-
-
-def test_twse_confirmed_0052_split_jump_is_truncated():
-    """0052 real move: genuine 1-for-7 split, +85.7% single-day jump.
-    The truncate is strictly-after the jump date, so the jump day itself
-    (bad on both sides: pre-split scale in the numerator, post-split in the
-    pct_change) is conservatively dropped along with everything before it."""
-    bot = GridBot(MagicMock(), MagicMock())
-    pre_split = [20.0, 20.1, 19.9]
-    post_split = [20.0 * 1.857, 37.5, 37.8]  # +85.7% jump, then normal post-split moves
-    close = make_series(*(pre_split + post_split))
-
-    result = bot._truncate_at_bad_data(close)
-
-    assert len(result) == len(post_split) - 1
-    assert result.equals(close.iloc[len(pre_split) + 1:])
+    assert _adjust_split_defects(close).equals(close)
 
 
 def test_twse_confirmed_split_is_rescaled_to_a_continuous_series():
     """backtest.py's _adjust_split_defects must eliminate the discontinuity
-    (unlike the live truncate, which drops history) so a full backtest can
+    so a full backtest can
     run over pre- and post-split data on one consistent scale."""
     pre_split = [20.0, 20.1, 19.9]
     jump_ratio = 1.857

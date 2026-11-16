@@ -3,9 +3,8 @@ market regime (Bull/Bear/Sideways off a 20-day rolling return, +-2% entry
 threshold with hysteresis - same entry convention as the
 markov-hedge-fund-method skill, hysteresis added on top after a flat
 threshold measured a 17.5% day-to-day flip rate on real history), to check
-whether GridBot.parameters' backtested edge is uniform across regimes or
-concentrated in one, per the 2021-07..2023-04 near-flat window found by
-manual walk-forward checking."""
+whether the backtested result is uniform across regimes or concentrated
+in one."""
 import numpy as np
 import pandas as pd
 import pytest
@@ -13,13 +12,7 @@ import pytest
 from sj_trading.backtest import backtest, backtest_by_regime
 from sj_trading.misc import blended_price, label_regimes
 
-PARAMS = {
-    "BiasUpperLimit": 1.4,
-    "UpperLimitPosition": 0.35,
-    "BiasLowerLimit": 0.70,
-    "LowerLimitPosition": 0.80,
-    "BiasPeriod": 30,
-}
+ALLOC = 0.65
 
 
 def _synthetic_df(n=400, seed=0):
@@ -93,29 +86,27 @@ def test_label_regimes_stability_improves_with_hysteresis():
 
 def test_backtest_return_daily_flag():
     df = _synthetic_df()
-    ratio = df["upper"] / df["lower"]
-    without = backtest(df, ratio, PARAMS)
+    without = backtest(df, ALLOC)
     assert "daily_returns" not in without
 
-    with_daily = backtest(df, ratio, PARAMS, return_daily=True)
+    with_daily = backtest(df, ALLOC, return_daily=True)
     assert isinstance(with_daily["daily_returns"], pd.Series)
     assert len(with_daily["daily_returns"]) == with_daily["n_days"] - 1
 
 
 def test_backtest_by_regime_covers_all_days_and_labels():
     df = _synthetic_df()
-    out = backtest_by_regime(df, PARAMS)
+    out = backtest_by_regime(df, ALLOC)
 
     assert set(out["regime"]) == {"Bull", "Bear", "Sideways"}
-    ratio = df["upper"] / df["lower"]
-    total_days = backtest(df, ratio, PARAMS, return_daily=True)["daily_returns"].shape[0]
+    total_days = backtest(df, ALLOC, return_daily=True)["daily_returns"].shape[0]
     assert out["n_days"].sum() == total_days
 
 
 def test_backtest_by_regime_raises_on_insufficient_history():
     df = _synthetic_df(n=20)
     with pytest.raises(ValueError):
-        backtest_by_regime(df, PARAMS)
+        backtest_by_regime(df, ALLOC)
 
 
 def test_blended_price_compounds_daily_returns():

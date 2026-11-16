@@ -39,14 +39,14 @@ hit Yahoo Finance for historical prices.
 
 ```bash
 .claude/skills/run-sj-trading/driver.sh backtest-quick   # ~1-2s, no credentials
-.claude/skills/run-sj-trading/driver.sh backtest-full    # ~90-110s, no credentials
+.claude/skills/run-sj-trading/driver.sh backtest-full    # a few seconds, no credentials; rewrites backtest_stats.json
 .claude/skills/run-sj-trading/driver.sh bot-smoke 30     # needs .env credentials + network
 ```
 
 | command | what it does |
 |---|---|
-| `backtest-quick` | Imports `sj_trading.backtest` directly, loads 1y of 0052/00662 data, runs one `backtest()` + `buy_and_hold()` call. Proves the simulation logic and data loading work fast, without the full grid search. |
-| `backtest-full` | The actual `uv run python -m sj_trading.backtest` entry point: 9450-combo grid search over the current pair plus out-of-sample validation. This is what `CLAUDE.md` recommends re-running every 6-12 months to re-check `GridBot.parameters`. |
+| `backtest-quick` | Imports `sj_trading.backtest` directly, loads 1y of 0052/00662 data, runs one `backtest()` + `buy_and_hold()` call. Proves the simulation logic and data loading work fast, without touching `backtest_stats.json`. |
+| `backtest-full` | The actual `uv run python -m sj_trading.backtest` entry point: full-history backtest of `GridBot.TARGET_UPPER_ALLOC` beside a few other fixed splits, a per-regime breakdown, and a rewrite of `backtest_stats.json`. Re-run (and commit the file) whenever the allocation changes. |
 | `bot-smoke [timeout_seconds]` | Runs the live bot's real entry point (`python -u -m sj_trading.gridbot_body`) just long enough to prove login → contract fetch → quote subscribe → `GridBot` bootstrap all succeed, then kills it. Default timeout 30s. The bot's own loop only exits at specific Taipei wall-clock hours (14:00-15:00) or `KeyboardInterrupt`, so it must be externally time-boxed for a smoke test — it will never exit on its own within a short window. |
 
 Expected `bot-smoke` output ends with something like:

@@ -1,13 +1,7 @@
 {
-  "mean_daily_return": 0.001003569315836858,
-  "std_daily_return": 0.013144180119856923,
-  "generated_at": "2026-10-01T05:50:05.338500+00:00",
-  "params": {
-    "BiasUpperLimit": 1.4,
-    "UpperLimitPosition": 0.35,
-    "BiasLowerLimit": 0.95,
-    "LowerLimitPosition": 0.7,
-    "BiasPeriod": 150
-  },
+  "mean_daily_return": 0.0009716375339050915,
+  "std_daily_return": 0.01324593321694045,
+  "generated_at": "2026-11-16T15:04:09.007328+00:00",
+  "target_upper_alloc": 0.65,
   "execution_slippage_ticks": 1.0
 }

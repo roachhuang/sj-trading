@@ -15,25 +15,22 @@ case "$cmd" in
   backtest-quick)
     # No credentials needed. Direct-invocation smoke test: imports the
     # library and runs one backtest + one buy&hold comparison over a
-    # short (1y) window - proves the whole calculateGrid/sendOrders
-    # simulation logic and data loading work, in ~1-2s instead of the
-    # ~100s a full grid search takes.
+    # short (1y) window - proves the calculateSharetarget/sendOrders
+    # simulation logic and data loading work, in ~1-2s, without
+    # rewriting backtest_stats.json.
     uv run python -c "
 from sj_trading.backtest import load_prices, backtest, buy_and_hold
 df = load_prices(period='1y')
 print(f'loaded {len(df)} rows: {df.index.min().date()} to {df.index.max().date()}')
-ratio = df['upper'] / df['lower']
-params = {'BiasUpperLimit': 1.1, 'UpperLimitPosition': 0.15,
-          'BiasLowerLimit': 0.95, 'LowerLimitPosition': 0.85, 'BiasPeriod': 60}
-print('backtest:', backtest(df, ratio, params))
+print('backtest:', backtest(df, 0.65))
 print('buy&hold:', buy_and_hold(df))
 "
     ;;
 
   backtest-full)
-    # The actual documented CLI entry point. Full 9450-combo grid search
-    # over the current pair (0052/00662) plus out-of-sample validation.
-    # Takes ~90-110s.
+    # The actual documented CLI entry point: full-history backtest of the
+    # live allocation next to a few other fixed splits, per-regime
+    # breakdown, and it REWRITES backtest_stats.json. Takes a few seconds.
     uv run python -m sj_trading.backtest
     ;;
 

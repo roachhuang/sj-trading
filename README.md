@@ -1,4 +1,4 @@
-run backtest manually every 6-12 months and update params on line 34 of gridbot.py w/ the new backtest_stats.json.
+The bot holds a fixed 65% 0052 / 35% 00662 split (GridBot.TARGET_UPPER_ALLOC in gridbot.py). If you change it, run `uv run python -m sj_trading.backtest` and commit the new backtest_stats.json.
 
 source .venv/bin/activate or 
 . venv/bin/activate
